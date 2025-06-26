@@ -1,0 +1,14 @@
+Local openwork job contract - 0x08f1785174f56600bA22F8d26067b19F4C3E4231 
+- deploy with 
+    layerzero endpoint address of the chain you are deploying to
+    owner address which is your own address
+    USDT address - you can use this for testing on ARB 0x403a1eea6FF82152F88Da33a51c439f7e2C85665 
+- then call the set peer function and set the native openwork job contract as the peer
+- then call the set EID function and set the native chain dest. id (LZ dest. ID not chain ID) 
+
+NativeOpenWork Job contract - 0xAa65Ed34F92F5e8e2c2253863dbCe0425d6B44B2
+- deploy with 
+    layerzero endpoint address of the chain you are deploying to
+    owner address which is your own address
+- then call the set peer function and set the local openwork job contract as the peer
+

@@ -1,0 +1,9 @@
+commands - 
+
+verify contracts- 
+local openwork contract - forge verify-contract 0xAa65Ed34F92F5e8e2c2253863dbCe0425d6B44B2 src/bridged/local-openwork-job.sol:LocalOpenWorkJobContract --etherscan-api-key $ARBSCAN_API_KEY --chain 421614 --constructor-args $(cast abi-encode "constructor(address,address,address)" "0x6EDCE65403992e310A62460808c4b910D972f10f" "0xaA6816876280c5A685Baf3D9c214A092c7f3F6Ef" "0x403a1eea6FF82152F88Da33a51c439f7e2C85665")
+native openwork contract - forge verify-contract 0xAa65Ed34F92F5e8e2c2253863dbCe0425d6B44B2 src/bridged/native-openwork-job.sol:NativeOpenWorkJobContract --etherscan-api-key $OPSCAN_API_KEY --chain 11155420 --constructor-args $(cast abi-encode "constructor(address,address)" "0x6EDCE65403992e310A62460808c4b910D972f10f" "0xaA6816876280c5A685Baf3D9c214A092c7f3F6Ef")
+
+deploy - 
+forge script script/SetEIDs.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
+forge script script/SetEIDs.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --broadcast
