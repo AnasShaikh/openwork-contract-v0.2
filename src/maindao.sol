@@ -5,10 +5,12 @@ import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/IGovernor.sol";
+import "./rewards-calc-maindao.sol";
 
 interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 interface InativeDAO {
@@ -23,6 +25,7 @@ interface InativeDAO {
 
 contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
     IERC20 public openworkToken;
+    RewardsCalculator public rewardsCalculator;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     
     // Cross-chain receiver contract address
@@ -36,8 +39,11 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
     uint256 public votingStakeThreshold = 50 * 10**18;
     uint256 public unstakeDelay = 24 hours;
     
-    // NEW: Platform total tracking
+    // Platform total tracking
     uint256 public totalPlatformPayments;
+    
+    // Rewards tracking
+    mapping(address => uint256) public claimedRewards;
     
     struct Stake {
         uint256 amount;
@@ -73,9 +79,11 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
     event EarnerUpdated(address indexed earner, uint256 newBalance, uint256 totalGovernanceActions, uint256 cumulativeEarnings);
     event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
     event AuthorizedContractUpdated(address indexed contractAddr, bool authorized);
-    event PlatformTotalUpdated(uint256 newTotal); // NEW EVENT
+    event PlatformTotalUpdated(uint256 newTotal);
+    event RewardsClaimed(address indexed user, uint256 amount);
+    event RewardsCalculatorUpdated(address indexed newCalculator);
     
-    constructor(address _openworkToken) 
+    constructor(address _openworkToken, address _rewardsCalculator) 
         Governor("OpenWorkDAO")
         GovernorSettings(
             1 minutes,
@@ -84,6 +92,14 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
         )
     {
         openworkToken = IERC20(_openworkToken);
+        rewardsCalculator = RewardsCalculator(_rewardsCalculator);
+    }
+    
+    // Set rewards calculator contract
+    function setRewardsCalculator(address _rewardsCalculator) external onlyGovernance {
+        require(_rewardsCalculator != address(0), "Invalid rewards calculator address");
+        rewardsCalculator = RewardsCalculator(_rewardsCalculator);
+        emit RewardsCalculatorUpdated(_rewardsCalculator);
     }
     
     // Set cross-chain receiver contract
@@ -137,6 +153,68 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
         require(authorizedContracts[msg.sender], "Not authorized");
         _incrementEarnerGovernanceActions(account);
     }
+    
+    // REWARDS CLAIMING FUNCTIONS
+    
+    function calculateTotalRewards(address user) public view returns (uint256) {
+        uint256 governanceActions = earners[user].total_governance_actions;
+        if (governanceActions == 0) return 0;
+        
+        return rewardsCalculator.calculateTotalRewards(governanceActions, totalPlatformPayments);
+    }
+    
+    function getClaimableRewards(address user) public view returns (uint256) {
+        uint256 totalRewards = calculateTotalRewards(user);
+        uint256 alreadyClaimed = claimedRewards[user];
+        
+        if (totalRewards <= alreadyClaimed) return 0;
+        return totalRewards - alreadyClaimed;
+    }
+    
+    function getCurrentRewardPerAction() public view returns (uint256) {
+        return rewardsCalculator.getCurrentRewardPerAction(totalPlatformPayments);
+    }
+    
+    function getCurrentRewardBand() public view returns (uint256 minValue, uint256 maxValue, uint256 rewardPerAction) {
+        uint256 bandIndex = rewardsCalculator.getCurrentBandIndex(totalPlatformPayments);
+        return rewardsCalculator.getRewardBand(bandIndex);
+    }
+    
+    function claimRewards() external {
+        require(earners[msg.sender].earnerAddress != address(0), "User is not an earner");
+        require(earners[msg.sender].total_governance_actions > 0, "No governance actions performed");
+        
+        uint256 claimableAmount = getClaimableRewards(msg.sender);
+        require(claimableAmount > 0, "No rewards to claim");
+        
+        // Check contract has enough tokens
+        require(openworkToken.balanceOf(address(this)) >= claimableAmount, "Insufficient contract balance");
+        
+        // Update claimed amount
+        claimedRewards[msg.sender] += claimableAmount;
+        
+        // Transfer tokens to user
+        require(openworkToken.transfer(msg.sender, claimableAmount), "Token transfer failed");
+        
+        emit RewardsClaimed(msg.sender, claimableAmount);
+    }
+    
+    // View function to get user's reward info
+    function getUserRewardInfo(address user) external view returns (
+        uint256 totalGovernanceActions,
+        uint256 totalRewardsEarned,
+        uint256 claimedAmount,
+        uint256 claimableAmount,
+        uint256 currentRewardPerAction
+    ) {
+        totalGovernanceActions = earners[user].total_governance_actions;
+        totalRewardsEarned = calculateTotalRewards(user);
+        claimedAmount = claimedRewards[user];
+        claimableAmount = getClaimableRewards(user);
+        currentRewardPerAction = getCurrentRewardPerAction();
+    }
+    
+    // EXISTING FUNCTIONS (unchanged)
     
     function stake(uint256 amount, uint256 durationMinutes) external {
         require(amount >= MIN_STAKE, "Minimum stake is 100 tokens");
@@ -202,7 +280,7 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
         _sendStakeDataCrossChain(staker, isActive);
     }
 
-    // NEW: Updated function with platform total parameter
+    // Updated function with platform total parameter
     function addOrUpdateEarner(address earnerAddress, uint256 balance, uint256 governanceActions, uint256 cumulativeEarnings, uint256 platformTotal) external {
         require(earnerAddress != address(0), "Invalid earner address");
         require(authorizedContracts[msg.sender] || address(this) == address(this), "Not authorized");
@@ -229,7 +307,7 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
         emit EarnerUpdated(earnerAddress, balance, finalGovernanceActions, cumulativeEarnings);
     }
 
-    // NEW: Backward compatibility function without platform total
+    // Backward compatibility function without platform total
     function addOrUpdateEarnerWithoutPlatformTotal(address earnerAddress, uint256 balance, uint256 governanceActions, uint256 cumulativeEarnings) external {
         require(earnerAddress != address(0), "Invalid earner address");
         require(authorizedContracts[msg.sender] || address(this) == address(this), "Not authorized");
@@ -317,12 +395,12 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple {
         return (earner.earnerAddress, earner.balance, earner.total_governance_actions);
     }
     
-    // NEW: Getter function for platform total
+    // Getter function for platform total
     function getTotalPlatformPayments() external view returns (uint256) {
         return totalPlatformPayments;
     }
 
-    // NEW: Admin function to manually update platform total if needed
+    // Admin function to manually update platform total if needed
     function updatePlatformTotal(uint256 newTotal) external onlyGovernance {
         require(newTotal >= totalPlatformPayments, "Cannot decrease platform total");
         totalPlatformPayments = newTotal;

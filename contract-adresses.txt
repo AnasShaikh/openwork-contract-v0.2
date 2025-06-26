@@ -1,0 +1,12 @@
+local openwork job contract - 0x6633080966E94540C70DD1C233A90d1DceC79569
+NativeOpenWork Job contract - 0xc6d4d9198A2c091f2F9FDA4a957b7F7eFCe26194
+
+
+
+
+commands - 
+
+verify - 
+forge verify-contract 0x6633080966E94540C70DD1C233A90d1DceC79569 src/bridged/local-openwork-job.sol:LocalOpenWorkJobContract --etherscan-api-key $ARBSCAN_API_KEY --chain 421614 --constructor-args $(cast abi-encode "constructor(address,address,address)" "0x6EDCE65403992e310A62460808c4b910D972f10f" "0xaA6816876280c5A685Baf3D9c214A092c7f3F6Ef" "0x403a1eea6FF82152F88Da33a51c439f7e2C85665")
+deploy - 
+forge script script/Set-peers-both-job-contracts.s.sol --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
