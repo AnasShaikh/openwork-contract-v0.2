@@ -1,0 +1,5 @@
+@openzeppelin/=lib/openzeppelin-contracts/
+@layerzerolabs/lz-evm-protocol-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/protocol/
+@layerzerolabs/lz-evm-messagelib-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib/
+@layerzerolabs/oapp-evm/=lib/LayerZero-v2/packages/layerzero-v2/evm/oapp/
+@layerzerolabs/devtools/=lib/devtools/
