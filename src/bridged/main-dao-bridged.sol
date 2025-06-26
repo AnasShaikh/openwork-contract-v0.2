@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol
 import "@openzeppelin/contracts/governance/IGovernor.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import { OApp, Origin } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
+import { MessagingReceipt } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
+import { MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
 import "../rewards-calc-maindao.sol";
 
 interface IERC20 {
@@ -30,8 +32,12 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple, OApp {
     RewardsCalculator public rewardsCalculator;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     
-    // Cross-chain receiver contract address
+    // Cross-chain receiver contract address (for backward compatibility)
     InativeDAO public nativeDAO;
+    
+    // LayerZero configuration for Native DAO communication
+    uint32 public nativeDaoEid;
+    bool public useLayerZeroForNativeDAO = true;
     
     // Simplified authorization system
     mapping(address => bool) public authorizedContracts;
@@ -160,7 +166,15 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         emit RewardsCalculatorUpdated(_rewardsCalculator);
     }
     
-    // Set cross-chain receiver contract
+    function setNativeDaoEid(uint32 _nativeDaoEid) external onlyOwner {
+        nativeDaoEid = _nativeDaoEid;
+    }
+    
+    function setUseLayerZeroForNativeDAO(bool _useLayerZero) external onlyOwner {
+        useLayerZeroForNativeDAO = _useLayerZero;
+    }
+    
+    // Set cross-chain receiver contract (for backward compatibility)
     function setnativeDAO(address _receiver) external onlyGovernance {
         nativeDAO = InativeDAO(_receiver);
     }
@@ -173,6 +187,53 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple, OApp {
     
     // Internal function to send stake data cross-chain
     function _sendStakeDataCrossChain(address staker, bool isActive) internal {
+        if (useLayerZeroForNativeDAO) {
+            _sendStakeDataViaLayerZero(staker, isActive);
+        } else {
+            _sendStakeDataDirectCall(staker, isActive);
+        }
+    }
+    
+    function _sendStakeDataViaLayerZero(address staker, bool isActive) internal {
+        if (nativeDaoEid == 0) return;
+        
+        Stake memory userStake = stakes[staker];
+        
+        // Send cross-chain message
+        bytes memory payload = abi.encode(
+            "UPDATE_STAKE_DATA",
+            staker,
+            userStake.amount,
+            userStake.unlockTime,
+            userStake.durationMinutes,
+            isActive
+        );
+        
+        try this._lzSendStakeUpdate{value: address(this).balance}(payload) {
+            emit CrossChainSendSuccess(staker);
+        } catch {
+            // Fallback to direct call if LayerZero fails
+            _sendStakeDataDirectCall(staker, isActive);
+        }
+    }
+    
+    function _lzSendStakeUpdate(bytes memory payload) external payable {
+        require(msg.sender == address(this), "Internal function only");
+        
+        bytes memory defaultOptions = hex"0003010011010000000000000000000000000000ea60";
+        
+        MessagingReceipt memory receipt = _lzSend(
+            nativeDaoEid,
+            payload,
+            defaultOptions,
+            MessagingFee(msg.value, 0),
+            payable(address(this))
+        );
+        
+        // Note: Could emit an event here if needed
+    }
+    
+    function _sendStakeDataDirectCall(address staker, bool isActive) internal {
         if (address(nativeDAO) == address(0)) return;
         
         Stake memory userStake = stakes[staker];
@@ -190,6 +251,52 @@ contract maindao is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         } catch {
             emit CrossChainSendFailed(staker, "Unknown error");
         }
+    }
+    
+    // Manual function to send stake data with custom options
+    function sendStakeDataWithOptions(address staker, bytes calldata _options) external payable onlyOwner {
+        require(useLayerZeroForNativeDAO, "LayerZero not enabled for Native DAO");
+        require(nativeDaoEid != 0, "Native DAO EID not set");
+        
+        Stake memory userStake = stakes[staker];
+        bool isActive = userStake.amount > 0;
+        
+        bytes memory payload = abi.encode(
+            "UPDATE_STAKE_DATA",
+            staker,
+            userStake.amount,
+            userStake.unlockTime,
+            userStake.durationMinutes,
+            isActive
+        );
+        
+        MessagingReceipt memory receipt = _lzSend(
+            nativeDaoEid,
+            payload,
+            _options,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
+        
+        emit CrossChainSendSuccess(staker);
+    }
+    
+    // Quote function for gas estimation
+    function quoteStakeUpdate(address staker, bytes calldata _options) external view returns (uint256) {
+        Stake memory userStake = stakes[staker];
+        bool isActive = userStake.amount > 0;
+        
+        bytes memory payload = abi.encode(
+            "UPDATE_STAKE_DATA",
+            staker,
+            userStake.amount,
+            userStake.unlockTime,
+            userStake.durationMinutes,
+            isActive
+        );
+        
+        MessagingFee memory fee = _quote(nativeDaoEid, payload, _options, false);
+        return fee.nativeFee;
     }
     
     // Helper function to increment governance actions for earners
