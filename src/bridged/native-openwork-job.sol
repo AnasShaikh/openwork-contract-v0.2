@@ -9,11 +9,17 @@ interface IRewardsTrackingContract {
 }
 
 contract NativeOpenWorkJobContract is OApp {
+    enum JobStatus {
+        Open,           // Job posted, accepting applications
+        InProgress,     // Job started, work in progress
+        Completed,      // All milestones completed
+        Cancelled       // Job cancelled
+    }
+    
     struct Profile {
         address userAddress;
         string ipfsHash;
         address referrerAddress;
-        uint256 rating;
         string[] portfolioHashes;
     }
     
@@ -35,12 +41,11 @@ contract NativeOpenWorkJobContract is OApp {
         address jobGiver;
         address[] applicants;
         string jobDetailHash;
-        bool isOpen;
+        JobStatus status;
         string[] workSubmissions;
         MilestonePayment[] milestonePayments;
         MilestonePayment[] finalMilestones;
         uint256 totalPaid;
-        uint256 currentLockedAmount;
         uint256 currentMilestone;
         address selectedApplicant;
         uint256 selectedApplicationId;
@@ -76,6 +81,8 @@ contract NativeOpenWorkJobContract is OApp {
     event CrossChainMessageReceived(bytes32 indexed messageId, string indexed messageType, address indexed executor);
     event LocalContractAuthorized(uint32 indexed eid, bytes32 indexed localContract);
     event LocalContractDeauthorized(uint32 indexed eid, bytes32 indexed localContract);
+    event JobStatusChanged(uint256 indexed jobId, JobStatus newStatus);
+    event PaymentReleasedAndNextMilestoneLocked(uint256 indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
     
     constructor(address _endpoint, address _owner) OApp(_endpoint, _owner) Ownable(_owner) {}
     
@@ -117,9 +124,9 @@ contract NativeOpenWorkJobContract is OApp {
         emit CrossChainMessageReceived(_guid, messageType, msg.sender);
         
         if (keccak256(bytes(messageType)) == keccak256(bytes("CREATE_PROFILE"))) {
-            (, address user, string memory ipfsHash, address referrerAddress, uint256 rating) = 
-                abi.decode(payload, (string, address, string, address, uint256));
-            createProfile(user, ipfsHash, referrerAddress, rating);
+            (, address user, string memory ipfsHash, address referrerAddress) = 
+                abi.decode(payload, (string, address, string, address));
+            createProfile(user, ipfsHash, referrerAddress);
             
         } else if (keccak256(bytes(messageType)) == keccak256(bytes("POST_JOB"))) {
             (, address jobGiver, string memory jobDetailHash, MilestonePayment[] memory milestonePayments, uint256 totalValue) = 
@@ -160,21 +167,25 @@ contract NativeOpenWorkJobContract is OApp {
             (, address user, string memory portfolioHash) = 
                 abi.decode(payload, (string, address, string));
             addPortfolio(user, portfolioHash);
+            
+        } else if (keccak256(bytes(messageType)) == keccak256(bytes("RELEASE_AND_LOCK"))) {
+            (, address jobGiver, uint256 jobId, uint256 releasedAmount, uint256 lockedAmount) = 
+                abi.decode(payload, (string, address, uint256, uint256, uint256));
+            releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
         }
     }
     
-    function createProfile(string memory _ipfsHash, address _referrerAddress, uint256 _rating) public {
-        createProfile(msg.sender, _ipfsHash, _referrerAddress, _rating);
+    function createProfile(string memory _ipfsHash, address _referrerAddress) public {
+        createProfile(msg.sender, _ipfsHash, _referrerAddress);
     }
     
-    function createProfile(address _user, string memory _ipfsHash, address _referrerAddress, uint256 _rating) public {
+    function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) public {
         require(!hasProfile[_user], "Profile already exists");
         
         profiles[_user] = Profile({
             userAddress: _user,
             ipfsHash: _ipfsHash,
             referrerAddress: _referrerAddress,
-            rating: _rating,
             portfolioHashes: new string[](0)
         });
         
@@ -188,28 +199,21 @@ contract NativeOpenWorkJobContract is OApp {
         return profiles[_user];
     }
     
-    function postJob(string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments) public payable {
-        postJob(msg.sender, _jobDetailHash, _milestonePayments, msg.value);
+    function postJob(string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments) public {
+        postJob(msg.sender, _jobDetailHash, _milestonePayments, 0);
     }
     
     function postJob(address _jobGiver, string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments, uint256 _totalValue) public {
         require(hasProfile[_jobGiver], "Must have profile to post job");
         require(_milestonePayments.length > 0, "Must have at least one milestone");
         
-        uint256 totalAmount = 0;
-        for (uint i = 0; i < _milestonePayments.length; i++) {
-            totalAmount += _milestonePayments[i].amount;
-        }
-        require(_totalValue == totalAmount, "Payment must equal total milestone amounts");
-        
         jobCounter++;
         Job storage newJob = jobs[jobCounter];
         newJob.id = jobCounter;
         newJob.jobGiver = _jobGiver;
         newJob.jobDetailHash = _jobDetailHash;
-        newJob.isOpen = true;
+        newJob.status = JobStatus.Open;
         newJob.totalPaid = 0;
-        newJob.currentLockedAmount = _totalValue;
         newJob.currentMilestone = 0;
         newJob.selectedApplicant = address(0);
         newJob.selectedApplicationId = 0;
@@ -219,6 +223,7 @@ contract NativeOpenWorkJobContract is OApp {
         }
         
         emit JobPosted(jobCounter, _jobGiver, _jobDetailHash);
+        emit JobStatusChanged(jobCounter, JobStatus.Open);
     }
     
     function getJob(uint256 _jobId) public view returns (Job memory) {
@@ -233,7 +238,7 @@ contract NativeOpenWorkJobContract is OApp {
     function applyToJob(address _applicant, uint256 _jobId, string memory _applicationHash, MilestonePayment[] memory _proposedMilestones) public {
         require(hasProfile[_applicant], "Must have profile to apply");
         require(jobs[_jobId].id != 0, "Job does not exist");
-        require(jobs[_jobId].isOpen, "Job is not open");
+        require(jobs[_jobId].status == JobStatus.Open, "Job is not open");
         require(jobs[_jobId].jobGiver != _applicant, "Cannot apply to own job");
         require(_proposedMilestones.length > 0, "Must propose at least one milestone");
         
@@ -268,7 +273,7 @@ contract NativeOpenWorkJobContract is OApp {
     
     function isOpen(uint256 _jobId) public view returns (bool) {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        return jobs[_jobId].isOpen;
+        return jobs[_jobId].status == JobStatus.Open;
     }
     
     function startJob(uint256 _applicationId, bool _useApplicantMilestones) public {
@@ -290,13 +295,13 @@ contract NativeOpenWorkJobContract is OApp {
         Job storage job = jobs[jobId];
         
         require(job.jobGiver == _jobGiver, "Only job giver can start job");
-        require(job.isOpen, "Job is not open");
+        require(job.status == JobStatus.Open, "Job is not open");
         require(application.applicant != address(0), "Invalid application");
         
         // Set selected applicant and application
         job.selectedApplicant = application.applicant;
         job.selectedApplicationId = _applicationId;
-        job.isOpen = false;
+        job.status = JobStatus.InProgress;
         job.currentMilestone = 1;
         
         // Choose and store final milestones
@@ -311,6 +316,7 @@ contract NativeOpenWorkJobContract is OApp {
         }
         
         emit JobStarted(jobId, _applicationId, application.applicant, _useApplicantMilestones);
+        emit JobStatusChanged(jobId, JobStatus.InProgress);
     }
     
     function getApplication(uint256 _jobId, uint256 _applicationId) public view returns (Application memory) {
@@ -324,7 +330,7 @@ contract NativeOpenWorkJobContract is OApp {
     
     function submitWork(address _applicant, uint256 _jobId, string memory _submissionHash) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        require(!jobs[_jobId].isOpen, "Job must be started");
+        require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
         require(jobs[_jobId].selectedApplicant == _applicant, "Only selected applicant can submit work");
         require(jobs[_jobId].currentMilestone <= jobs[_jobId].finalMilestones.length, "All milestones completed");
         
@@ -340,13 +346,19 @@ contract NativeOpenWorkJobContract is OApp {
     function releasePayment(address _jobGiver, uint256 _jobId, uint256 _amount) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
         require(jobs[_jobId].jobGiver == _jobGiver, "Only job giver can release payment");
-        require(!jobs[_jobId].isOpen, "Job must be started");
+        require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
         require(jobs[_jobId].selectedApplicant != address(0), "No applicant selected");
         require(jobs[_jobId].currentMilestone <= jobs[_jobId].finalMilestones.length, "All milestones completed");
         
         // Update total paid amount
         jobs[_jobId].totalPaid += _amount;
         totalPlatformPayments += _amount;
+        
+        // Check if all milestones completed
+        if (jobs[_jobId].currentMilestone == jobs[_jobId].finalMilestones.length) {
+            jobs[_jobId].status = JobStatus.Completed;
+            emit JobStatusChanged(_jobId, JobStatus.Completed);
+        }
         
         // Update rewards
         if (address(rewardsContract) != address(0)) {
@@ -362,14 +374,40 @@ contract NativeOpenWorkJobContract is OApp {
     
     function lockNextMilestone(address /* _caller */, uint256 _jobId, uint256 _lockedAmount) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        require(!jobs[_jobId].isOpen, "Job must be started");
+        require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
         require(jobs[_jobId].currentMilestone < jobs[_jobId].finalMilestones.length, "All milestones already completed");
         
         // Increment to next milestone
         jobs[_jobId].currentMilestone += 1;
-        jobs[_jobId].currentLockedAmount = _lockedAmount;
         
         emit MilestoneLocked(_jobId, jobs[_jobId].currentMilestone, _lockedAmount);
+    }
+    
+    function releasePaymentAndLockNext(address _jobGiver, uint256 _jobId, uint256 _releasedAmount, uint256 _lockedAmount) public {
+        require(jobs[_jobId].id != 0, "Job does not exist");
+        require(jobs[_jobId].jobGiver == _jobGiver, "Only job giver can release and lock");
+        require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
+        require(jobs[_jobId].selectedApplicant != address(0), "No applicant selected");
+        
+        // Update total paid amount
+        jobs[_jobId].totalPaid += _releasedAmount;
+        totalPlatformPayments += _releasedAmount;
+        
+        // Increment milestone
+        jobs[_jobId].currentMilestone += 1;
+        
+        // Check if all milestones completed
+        if (jobs[_jobId].currentMilestone > jobs[_jobId].finalMilestones.length) {
+            jobs[_jobId].status = JobStatus.Completed;
+            emit JobStatusChanged(_jobId, JobStatus.Completed);
+        }
+        
+        // Update rewards
+        if (address(rewardsContract) != address(0)) {
+            rewardsContract.updateRewards(_jobId, _releasedAmount, totalPlatformPayments);
+        }
+        
+        emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, jobs[_jobId].currentMilestone);
     }
     
     function rate(uint256 _jobId, address _userToRate, uint256 _rating) public {
@@ -378,7 +416,7 @@ contract NativeOpenWorkJobContract is OApp {
     
     function rate(address _rater, uint256 _jobId, address _userToRate, uint256 _rating) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        require(!jobs[_jobId].isOpen, "Job must be started");
+        require(jobs[_jobId].status == JobStatus.InProgress || jobs[_jobId].status == JobStatus.Completed, "Job must be started");
         require(_rating >= 1 && _rating <= 5, "Rating must be between 1 and 5");
         require(jobRatings[_jobId][_userToRate] == 0, "User already rated for this job");
         
@@ -439,6 +477,11 @@ contract NativeOpenWorkJobContract is OApp {
     
     function isJobOpen(uint256 _jobId) external view returns (bool) {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        return jobs[_jobId].isOpen;
+        return jobs[_jobId].status == JobStatus.Open;
+    }
+    
+    function getJobStatus(uint256 _jobId) external view returns (JobStatus) {
+        require(jobs[_jobId].id != 0, "Job does not exist");
+        return jobs[_jobId].status;
     }
 }

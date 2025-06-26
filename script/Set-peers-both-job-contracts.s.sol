@@ -12,7 +12,7 @@ interface INativeContract {
 
 contract SetPeersScript is Script {
     // Contract addresses
-    address constant LOCAL_CONTRACT = 0x6633080966E94540C70DD1C233A90d1DceC79569;  // Arbitrum Sepolia
+    address constant LOCAL_CONTRACT = 0x1C475Bb73D6804E3b223EDFD1d2ea6a13eBe1754;  // Arbitrum Sepolia
     address constant NATIVE_CONTRACT = 0xc6d4d9198A2c091f2F9FDA4a957b7F7eFCe26194; // Optimism Sepolia
     
     // EIDs

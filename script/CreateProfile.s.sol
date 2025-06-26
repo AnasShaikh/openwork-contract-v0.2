@@ -28,7 +28,7 @@ interface ILocalContract {
 }
 
 contract CreateProfileScript is Script {
-    address constant LOCAL_CONTRACT = 0x6633080966E94540C70DD1C233A90d1DceC79569;
+    address constant LOCAL_CONTRACT = 0x1C475Bb73D6804E3b223EDFD1d2ea6a13eBe1754;
     uint32 constant OP_SEPOLIA_EID = 40232;
     
     function run() external {
@@ -58,7 +58,7 @@ contract CreateProfileScript is Script {
         uint256 rating = 5; // Initial rating
         
         // LayerZero options (empty for default)
-        bytes memory options = "";
+        bytes memory options = "0x00030100110100000000000000000000000000030d40";
         
         console.log("=== Creating Profile ===");
         console.log("User:", msg.sender);
