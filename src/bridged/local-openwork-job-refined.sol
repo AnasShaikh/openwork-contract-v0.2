@@ -163,7 +163,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
             newJob.milestonePayments.push(_milestonePayments[i]);
         }
         
-        bytes memory payload = abi.encode("POST_JOB", compositeJobId, msg.sender, _jobDetailHash, _milestonePayments, totalAmount);
+        bytes memory payload = abi.encode("POST_JOB", compositeJobId, msg.sender, _jobDetailHash, _milestonePayments);
         _sendCrossChainMessage("POST_JOB", payload, _options, compositeJobId);
         
         emit JobPosted(compositeJobId, msg.sender, _jobDetailHash);
@@ -436,7 +436,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
     
     function quotePostJob(string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments, bytes calldata _options) external view returns (uint256) {
         uint256 compositeJobId = (uint256(chainId) << 128) | (jobCounter + 1);
-        bytes memory payload = abi.encode("POST_JOB", compositeJobId, msg.sender, _jobDetailHash, _milestonePayments, _calculateTotalAmount(_milestonePayments));
+        bytes memory payload = abi.encode("POST_JOB", compositeJobId, msg.sender, _jobDetailHash, _milestonePayments);
         return _quote(destinationEid, payload, _options, false).nativeFee;
     }
     
