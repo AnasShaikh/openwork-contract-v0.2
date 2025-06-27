@@ -70,6 +70,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
     IERC20 public immutable usdtToken;    
     // LayerZero configuration
     uint32 public destinationEid;
+    uint32 public immutable chainId;  // ADD: Chain ID for composite job IDs
     mapping(bytes32 => bool) public sentMessages;
     
     // Events
@@ -91,9 +92,11 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
     constructor(
         address _endpoint,
         address _owner,
-        address _usdtToken
+        address _usdtToken,
+        uint32 _chainId  // ADD: Chain ID parameter
     ) OApp(_endpoint, _owner) Ownable(msg.sender) {
         usdtToken = IERC20(_usdtToken);
+        chainId = _chainId;  // ADD: Store chain ID
         transferOwnership(_owner);
     }
     
@@ -101,7 +104,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         destinationEid = _destinationEid;
     }
     
-    // Profile Management - NO RATING FIELD
+    // Profile Management
     function createProfile(
         string memory _ipfsHash, 
         address _referrerAddress,
@@ -144,7 +147,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         return profiles[_user];
     }
     
-    // Job Management - NO PAYMENT LOCKING
+    // Job Management - Using composite job IDs
     function postJob(
         string memory _jobDetailHash, 
         MilestonePayment[] memory _milestonePayments,
@@ -160,8 +163,10 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         require(totalAmount > 0, "Total amount must be greater than 0");
         
         jobCounter++;
-        Job storage newJob = jobs[jobCounter];
-        newJob.id = jobCounter;
+        uint256 compositeJobId = (uint256(chainId) << 128) | jobCounter;  // CREATE: Composite job ID
+        
+        Job storage newJob = jobs[compositeJobId];  // Use composite ID
+        newJob.id = compositeJobId;
         newJob.jobGiver = msg.sender;
         newJob.jobDetailHash = _jobDetailHash;
         newJob.status = JobStatus.Open;
@@ -177,9 +182,10 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
             newJob.milestonePayments.push(_milestonePayments[i]);
         }
         
-        // Send cross-chain message
+        // Send cross-chain message with composite job ID
         bytes memory payload = abi.encode(
             "POST_JOB",
+            compositeJobId,  // Send composite job ID
             msg.sender,
             _jobDetailHash,
             _milestonePayments,
@@ -194,9 +200,9 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
             payable(msg.sender)
         );
         
-        emit JobPosted(jobCounter, msg.sender, _jobDetailHash);
-        emit JobStatusChanged(jobCounter, JobStatus.Open);
-        emit CrossChainMessageSent(receipt.guid, "POST_JOB", jobCounter);
+        emit JobPosted(compositeJobId, msg.sender, _jobDetailHash);
+        emit JobStatusChanged(compositeJobId, JobStatus.Open);
+        emit CrossChainMessageSent(receipt.guid, "POST_JOB", compositeJobId);
     }
     
     function getJob(uint256 _jobId) public view returns (Job memory) {
@@ -264,17 +270,18 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         return jobApplications[_jobId][_applicationId];
     }
     
-    // Job Execution - LOCKS FIRST MILESTONE PAYMENT
+    // Job Execution - BACKWARD COMPATIBLE: Keep original function signature
     function startJob(
         uint256 _applicationId, 
         bool _useApplicantMilestones,
         bytes calldata _options
     ) external payable nonReentrant {
-        // Get the application to find the job
+        // Find job ID by searching through applications (backward compatibility)
         uint256 jobId = 0;
         for (uint256 i = 1; i <= jobCounter; i++) {
-            if (jobApplications[i][_applicationId].id == _applicationId) {
-                jobId = i;
+            uint256 compositeJobId = (uint256(chainId) << 128) | i;
+            if (jobApplications[compositeJobId][_applicationId].id == _applicationId) {
+                jobId = compositeJobId;
                 break;
             }
         }
@@ -318,6 +325,7 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         bytes memory payload = abi.encode(
             "START_JOB",
             msg.sender,
+            jobId,  // Send the found job ID
             _applicationId,
             _useApplicantMilestones
         );
@@ -334,6 +342,72 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         emit JobStatusChanged(jobId, JobStatus.InProgress);
         emit USDTEscrowed(jobId, msg.sender, firstMilestoneAmount);
         emit CrossChainMessageSent(receipt.guid, "START_JOB", jobId);
+    }
+    
+    // NEW: Alternative function that takes job ID directly (for advanced usage)
+    function startJobWithId(
+        uint256 _jobId,
+        uint256 _applicationId, 
+        bool _useApplicantMilestones,
+        bytes calldata _options
+    ) external payable nonReentrant {
+        require(jobs[_jobId].id != 0, "Job does not exist");
+        
+        Application storage application = jobApplications[_jobId][_applicationId];
+        Job storage job = jobs[_jobId];
+        
+        require(job.jobGiver == msg.sender, "Only job giver can start job");
+        require(job.status == JobStatus.Open, "Job is not open");
+        require(application.applicant != address(0), "Invalid application");
+        
+        // Set selected applicant and application
+        job.selectedApplicant = application.applicant;
+        job.selectedApplicationId = _applicationId;
+        job.status = JobStatus.InProgress;
+        job.currentMilestone = 1;
+        
+        // Choose and store final milestones
+        if (_useApplicantMilestones) {
+            for (uint i = 0; i < application.proposedMilestones.length; i++) {
+                job.finalMilestones.push(application.proposedMilestones[i]);
+            }
+        } else {
+            for (uint i = 0; i < job.milestonePayments.length; i++) {
+                job.finalMilestones.push(job.milestonePayments[i]);
+            }
+        }
+        
+        // Lock first milestone payment
+        require(job.finalMilestones.length > 0, "No milestones defined");
+        uint256 firstMilestoneAmount = job.finalMilestones[0].amount;
+        
+        // Transfer USDT to contract for escrow
+        usdtToken.safeTransferFrom(msg.sender, address(this), firstMilestoneAmount);
+        
+        job.currentLockedAmount = firstMilestoneAmount;
+        job.totalEscrowed += firstMilestoneAmount;
+        
+        // Send cross-chain message
+        bytes memory payload = abi.encode(
+            "START_JOB",
+            msg.sender,
+            _jobId,
+            _applicationId,
+            _useApplicantMilestones
+        );
+        
+        MessagingReceipt memory receipt = _lzSend(
+            destinationEid,
+            payload,
+            _options,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
+        
+        emit JobStarted(_jobId, _applicationId, application.applicant, _useApplicantMilestones);
+        emit JobStatusChanged(_jobId, JobStatus.InProgress);
+        emit USDTEscrowed(_jobId, msg.sender, firstMilestoneAmount);
+        emit CrossChainMessageSent(receipt.guid, "START_JOB", _jobId);
     }
     
     function submitWork(
@@ -611,8 +685,8 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
         Origin calldata _origin,
         bytes32 _guid,
         bytes calldata payload,
-        address _executor,
-        bytes calldata _extraData
+        address, // _executor - unused
+        bytes calldata // _extraData - unused
     ) internal override {
         // Decode the message
         (string memory messageType) = abi.decode(payload, (string));
@@ -646,8 +720,12 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
             totalAmount += _milestonePayments[i].amount;
         }
         
+        // Simulate composite job ID for quote
+        uint256 compositeJobId = (uint256(chainId) << 128) | (jobCounter + 1);
+        
         bytes memory payload = abi.encode(
             "POST_JOB",
+            compositeJobId,
             msg.sender,
             _jobDetailHash,
             _milestonePayments,
@@ -693,6 +771,17 @@ contract LocalOpenWorkJobContract is OApp, ReentrancyGuard {
     function getJobStatus(uint256 _jobId) external view returns (JobStatus) {
         require(jobs[_jobId].id != 0, "Job does not exist");
         return jobs[_jobId].status;
+    }
+    
+    // Helper function to get chain ID and local counter from composite job ID
+    function decomposeJobId(uint256 _compositeJobId) external pure returns (uint32 extractedChainId, uint256 localJobId) {
+        extractedChainId = uint32(_compositeJobId >> 128);
+        localJobId = uint256(uint128(_compositeJobId));
+    }
+    
+    // Helper function to create composite job ID
+    function createCompositeJobId(uint32 _chainId, uint256 _localJobId) external pure returns (uint256) {
+        return (uint256(_chainId) << 128) | _localJobId;
     }
     
     // Withdraw contract balance (owner only)

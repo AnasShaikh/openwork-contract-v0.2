@@ -10,10 +10,10 @@ interface IRewardsTrackingContract {
 
 contract NativeOpenWorkJobContract is OApp {
     enum JobStatus {
-        Open,           // Job posted, accepting applications
-        InProgress,     // Job started, work in progress
-        Completed,      // All milestones completed
-        Cancelled       // Job cancelled
+        Open,
+        InProgress,
+        Completed,
+        Cancelled
     }
     
     struct Profile {
@@ -58,13 +58,9 @@ contract NativeOpenWorkJobContract is OApp {
     mapping(uint256 => uint256) public jobApplicationCounter;
     mapping(uint256 => mapping(address => uint256)) public jobRatings;
     mapping(address => uint256[]) public userRatings;
-    uint256 public jobCounter;
     uint256 public totalPlatformPayments;
     
-    // Cross-chain execution tracking
     mapping(bytes32 => bool) public executedMessages;
-    
-    // Access control for multiple local contracts
     mapping(uint32 => mapping(bytes32 => bool)) public authorizedLocalContracts;
     
     IRewardsTrackingContract public rewardsContract;
@@ -83,6 +79,7 @@ contract NativeOpenWorkJobContract is OApp {
     event LocalContractDeauthorized(uint32 indexed eid, bytes32 indexed localContract);
     event JobStatusChanged(uint256 indexed jobId, JobStatus newStatus);
     event PaymentReleasedAndNextMilestoneLocked(uint256 indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
+    event MessageExecutionFailed(bytes32 indexed messageId, string indexed messageType, string reason);
     
     constructor(address _endpoint, address _owner) OApp(_endpoint, _owner) Ownable(_owner) {}
     
@@ -90,7 +87,6 @@ contract NativeOpenWorkJobContract is OApp {
         rewardsContract = IRewardsTrackingContract(_rewardsContract);
     }
     
-    // Access control functions for multiple local contracts
     function addAuthorizedLocal(uint32 _eid, bytes32 _localContract) external onlyOwner {
         authorizedLocalContracts[_eid][_localContract] = true;
         emit LocalContractAuthorized(_eid, _localContract);
@@ -112,16 +108,26 @@ contract NativeOpenWorkJobContract is OApp {
         address,
         bytes calldata
     ) internal override {
-        // Prevent replay attacks
         require(!executedMessages[_guid], "Message already executed");
         executedMessages[_guid] = true;
         
-        // Verify sender is authorized
         require(authorizedLocalContracts[_origin.srcEid][_origin.sender], "Unauthorized local contract");
         
         string memory messageType = abi.decode(payload, (string));
         
         emit CrossChainMessageReceived(_guid, messageType, msg.sender);
+        
+        try this.executeMessage(messageType, payload) {
+            // Message executed successfully
+        } catch Error(string memory reason) {
+            emit MessageExecutionFailed(_guid, messageType, reason);
+        } catch {
+            emit MessageExecutionFailed(_guid, messageType, "Unknown error");
+        }
+    }
+    
+    function executeMessage(string memory messageType, bytes calldata payload) external {
+        require(msg.sender == address(this), "Internal function only");
         
         if (keccak256(bytes(messageType)) == keccak256(bytes("CREATE_PROFILE"))) {
             (, address user, string memory ipfsHash, address referrerAddress) = 
@@ -129,9 +135,9 @@ contract NativeOpenWorkJobContract is OApp {
             createProfile(user, ipfsHash, referrerAddress);
             
         } else if (keccak256(bytes(messageType)) == keccak256(bytes("POST_JOB"))) {
-            (, address jobGiver, string memory jobDetailHash, MilestonePayment[] memory milestonePayments, uint256 totalValue) = 
-                abi.decode(payload, (string, address, string, MilestonePayment[], uint256));
-            postJob(jobGiver, jobDetailHash, milestonePayments, totalValue);
+            (, uint256 compositeJobId, address jobGiver, string memory jobDetailHash, MilestonePayment[] memory milestonePayments, uint256 totalValue) = 
+                abi.decode(payload, (string, uint256, address, string, MilestonePayment[], uint256));
+            postJob(compositeJobId, jobGiver, jobDetailHash, milestonePayments, totalValue);
             
         } else if (keccak256(bytes(messageType)) == keccak256(bytes("APPLY_TO_JOB"))) {
             (, address applicant, uint256 jobId, string memory applicationHash, MilestonePayment[] memory proposedMilestones) = 
@@ -139,9 +145,9 @@ contract NativeOpenWorkJobContract is OApp {
             applyToJob(applicant, jobId, applicationHash, proposedMilestones);
             
         } else if (keccak256(bytes(messageType)) == keccak256(bytes("START_JOB"))) {
-            (, address jobGiver, uint256 applicationId, bool useApplicantMilestones) = 
-                abi.decode(payload, (string, address, uint256, bool));
-            startJob(jobGiver, applicationId, useApplicantMilestones);
+            (, address jobGiver, uint256 jobId, uint256 applicationId, bool useApplicantMilestones) = 
+                abi.decode(payload, (string, address, uint256, uint256, bool));
+            startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
             
         } else if (keccak256(bytes(messageType)) == keccak256(bytes("SUBMIT_WORK"))) {
             (, address applicant, uint256 jobId, string memory submissionHash) = 
@@ -172,11 +178,9 @@ contract NativeOpenWorkJobContract is OApp {
             (, address jobGiver, uint256 jobId, uint256 releasedAmount, uint256 lockedAmount) = 
                 abi.decode(payload, (string, address, uint256, uint256, uint256));
             releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
+        } else {
+            revert("Unknown message type");
         }
-    }
-    
-    function createProfile(string memory _ipfsHash, address _referrerAddress) public {
-        createProfile(msg.sender, _ipfsHash, _referrerAddress);
     }
     
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) public {
@@ -199,17 +203,25 @@ contract NativeOpenWorkJobContract is OApp {
         return profiles[_user];
     }
     
-    function postJob(string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments) public {
-        postJob(msg.sender, _jobDetailHash, _milestonePayments, 0);
-    }
-    
-    function postJob(address _jobGiver, string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments, uint256 _totalValue) public {
+    function postJob(uint256 _compositeJobId, address _jobGiver, string memory _jobDetailHash, MilestonePayment[] memory _milestonePayments, uint256 _totalValue) public {
         require(hasProfile[_jobGiver], "Must have profile to post job");
         require(_milestonePayments.length > 0, "Must have at least one milestone");
+        require(jobs[_compositeJobId].id == 0, "Job ID already exists");
         
-        jobCounter++;
-        Job storage newJob = jobs[jobCounter];
-        newJob.id = jobCounter;
+        uint32 extractedChainId = uint32(_compositeJobId >> 128);
+        uint256 localJobId = uint256(uint128(_compositeJobId));
+        require(extractedChainId > 0, "Invalid chain ID in composite job ID");
+        require(localJobId > 0, "Invalid local job ID in composite job ID");
+        
+        uint256 calculatedTotal = 0;
+        for (uint i = 0; i < _milestonePayments.length; i++) {
+            calculatedTotal += _milestonePayments[i].amount;
+        }
+        require(calculatedTotal == _totalValue, "Total value mismatch");
+        require(calculatedTotal > 0, "Total amount must be greater than 0");
+        
+        Job storage newJob = jobs[_compositeJobId];
+        newJob.id = _compositeJobId;
         newJob.jobGiver = _jobGiver;
         newJob.jobDetailHash = _jobDetailHash;
         newJob.status = JobStatus.Open;
@@ -222,17 +234,13 @@ contract NativeOpenWorkJobContract is OApp {
             newJob.milestonePayments.push(_milestonePayments[i]);
         }
         
-        emit JobPosted(jobCounter, _jobGiver, _jobDetailHash);
-        emit JobStatusChanged(jobCounter, JobStatus.Open);
+        emit JobPosted(_compositeJobId, _jobGiver, _jobDetailHash);
+        emit JobStatusChanged(_compositeJobId, JobStatus.Open);
     }
     
     function getJob(uint256 _jobId) public view returns (Job memory) {
         require(jobs[_jobId].id != 0, "Job does not exist");
         return jobs[_jobId];
-    }
-    
-    function applyToJob(uint256 _jobId, string memory _applicationHash, MilestonePayment[] memory _proposedMilestones) public {
-        applyToJob(msg.sender, _jobId, _applicationHash, _proposedMilestones);
     }
     
     function applyToJob(address _applicant, uint256 _jobId, string memory _applicationHash, MilestonePayment[] memory _proposedMilestones) public {
@@ -242,14 +250,12 @@ contract NativeOpenWorkJobContract is OApp {
         require(jobs[_jobId].jobGiver != _applicant, "Cannot apply to own job");
         require(_proposedMilestones.length > 0, "Must propose at least one milestone");
         
-        // Check if already applied
         for (uint i = 0; i < jobs[_jobId].applicants.length; i++) {
             require(jobs[_jobId].applicants[i] != _applicant, "Already applied to this job");
         }
         
         jobs[_jobId].applicants.push(_applicant);
         
-        // Create application
         jobApplicationCounter[_jobId]++;
         uint256 applicationId = jobApplicationCounter[_jobId];
         
@@ -266,45 +272,21 @@ contract NativeOpenWorkJobContract is OApp {
         emit JobApplication(_jobId, applicationId, _applicant, _applicationHash);
     }
     
-    function getJobDetails(uint256 _jobId) public view returns (Job memory) {
+    function startJob(address _jobGiver, uint256 _jobId, uint256 _applicationId, bool _useApplicantMilestones) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
-        return jobs[_jobId];
-    }
-    
-    function isOpen(uint256 _jobId) public view returns (bool) {
-        require(jobs[_jobId].id != 0, "Job does not exist");
-        return jobs[_jobId].status == JobStatus.Open;
-    }
-    
-    function startJob(uint256 _applicationId, bool _useApplicantMilestones) public {
-        startJob(msg.sender, _applicationId, _useApplicantMilestones);
-    }
-    
-    function startJob(address _jobGiver, uint256 _applicationId, bool _useApplicantMilestones) public {
-        // Get the application to find the job
-        uint256 jobId = 0;
-        for (uint256 i = 1; i <= jobCounter; i++) {
-            if (jobApplications[i][_applicationId].id == _applicationId) {
-                jobId = i;
-                break;
-            }
-        }
-        require(jobId != 0, "Application does not exist");
         
-        Application storage application = jobApplications[jobId][_applicationId];
-        Job storage job = jobs[jobId];
+        Application storage application = jobApplications[_jobId][_applicationId];
+        Job storage job = jobs[_jobId];
         
         require(job.jobGiver == _jobGiver, "Only job giver can start job");
         require(job.status == JobStatus.Open, "Job is not open");
         require(application.applicant != address(0), "Invalid application");
         
-        // Set selected applicant and application
         job.selectedApplicant = application.applicant;
         job.selectedApplicationId = _applicationId;
         job.status = JobStatus.InProgress;
         job.currentMilestone = 1;
         
-        // Choose and store final milestones
         if (_useApplicantMilestones) {
             for (uint i = 0; i < application.proposedMilestones.length; i++) {
                 job.finalMilestones.push(application.proposedMilestones[i]);
@@ -315,17 +297,13 @@ contract NativeOpenWorkJobContract is OApp {
             }
         }
         
-        emit JobStarted(jobId, _applicationId, application.applicant, _useApplicantMilestones);
-        emit JobStatusChanged(jobId, JobStatus.InProgress);
+        emit JobStarted(_jobId, _applicationId, application.applicant, _useApplicantMilestones);
+        emit JobStatusChanged(_jobId, JobStatus.InProgress);
     }
     
     function getApplication(uint256 _jobId, uint256 _applicationId) public view returns (Application memory) {
         require(jobApplications[_jobId][_applicationId].id != 0, "Application does not exist");
         return jobApplications[_jobId][_applicationId];
-    }
-    
-    function submitWork(uint256 _jobId, string memory _submissionHash) public {
-        submitWork(msg.sender, _jobId, _submissionHash);
     }
     
     function submitWork(address _applicant, uint256 _jobId, string memory _submissionHash) public {
@@ -339,10 +317,6 @@ contract NativeOpenWorkJobContract is OApp {
         emit WorkSubmitted(_jobId, _applicant, _submissionHash, jobs[_jobId].currentMilestone);
     }
     
-    function releasePayment(uint256 _jobId, uint256 _amount) public {
-        releasePayment(msg.sender, _jobId, _amount);
-    }
-    
     function releasePayment(address _jobGiver, uint256 _jobId, uint256 _amount) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
         require(jobs[_jobId].jobGiver == _jobGiver, "Only job giver can release payment");
@@ -350,17 +324,14 @@ contract NativeOpenWorkJobContract is OApp {
         require(jobs[_jobId].selectedApplicant != address(0), "No applicant selected");
         require(jobs[_jobId].currentMilestone <= jobs[_jobId].finalMilestones.length, "All milestones completed");
         
-        // Update total paid amount
         jobs[_jobId].totalPaid += _amount;
         totalPlatformPayments += _amount;
         
-        // Check if all milestones completed
         if (jobs[_jobId].currentMilestone == jobs[_jobId].finalMilestones.length) {
             jobs[_jobId].status = JobStatus.Completed;
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Update rewards
         if (address(rewardsContract) != address(0)) {
             rewardsContract.updateRewards(_jobId, _amount, totalPlatformPayments);
         }
@@ -368,16 +339,11 @@ contract NativeOpenWorkJobContract is OApp {
         emit PaymentReleased(_jobId, _jobGiver, jobs[_jobId].selectedApplicant, _amount, jobs[_jobId].currentMilestone);
     }
     
-    function lockNextMilestone(uint256 _jobId, uint256 _lockedAmount) public {
-        lockNextMilestone(msg.sender, _jobId, _lockedAmount);
-    }
-    
     function lockNextMilestone(address /* _caller */, uint256 _jobId, uint256 _lockedAmount) public {
         require(jobs[_jobId].id != 0, "Job does not exist");
         require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
         require(jobs[_jobId].currentMilestone < jobs[_jobId].finalMilestones.length, "All milestones already completed");
         
-        // Increment to next milestone
         jobs[_jobId].currentMilestone += 1;
         
         emit MilestoneLocked(_jobId, jobs[_jobId].currentMilestone, _lockedAmount);
@@ -389,29 +355,21 @@ contract NativeOpenWorkJobContract is OApp {
         require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
         require(jobs[_jobId].selectedApplicant != address(0), "No applicant selected");
         
-        // Update total paid amount
         jobs[_jobId].totalPaid += _releasedAmount;
         totalPlatformPayments += _releasedAmount;
         
-        // Increment milestone
         jobs[_jobId].currentMilestone += 1;
         
-        // Check if all milestones completed
         if (jobs[_jobId].currentMilestone > jobs[_jobId].finalMilestones.length) {
             jobs[_jobId].status = JobStatus.Completed;
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Update rewards
         if (address(rewardsContract) != address(0)) {
             rewardsContract.updateRewards(_jobId, _releasedAmount, totalPlatformPayments);
         }
         
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, jobs[_jobId].currentMilestone);
-    }
-    
-    function rate(uint256 _jobId, address _userToRate, uint256 _rating) public {
-        rate(msg.sender, _jobId, _userToRate, _rating);
     }
     
     function rate(address _rater, uint256 _jobId, address _userToRate, uint256 _rating) public {
@@ -422,12 +380,9 @@ contract NativeOpenWorkJobContract is OApp {
         
         bool isAuthorized = false;
         
-        // Check if caller is job giver rating the selected applicant
         if (_rater == jobs[_jobId].jobGiver && _userToRate == jobs[_jobId].selectedApplicant) {
             isAuthorized = true;
-        }
-        // Check if caller is selected applicant rating the job giver
-        else if (_rater == jobs[_jobId].selectedApplicant && _userToRate == jobs[_jobId].jobGiver) {
+        } else if (_rater == jobs[_jobId].selectedApplicant && _userToRate == jobs[_jobId].jobGiver) {
             isAuthorized = true;
         }
         
@@ -453,10 +408,6 @@ contract NativeOpenWorkJobContract is OApp {
         return totalRating / ratings.length;
     }
     
-    function addPortfolio(string memory _portfolioHash) public {
-        addPortfolio(msg.sender, _portfolioHash);
-    }
-    
     function addPortfolio(address _user, string memory _portfolioHash) public {
         require(hasProfile[_user], "Profile does not exist");
         require(bytes(_portfolioHash).length > 0, "Portfolio hash cannot be empty");
@@ -466,9 +417,8 @@ contract NativeOpenWorkJobContract is OApp {
         emit PortfolioAdded(_user, _portfolioHash);
     }
     
-    // Utility functions
-    function getJobCount() external view returns (uint256) {
-        return jobCounter;
+    function getJobCount() external pure returns (uint256) {
+        return 0; // No meaningful counter in composite ID system
     }
     
     function getJobApplicationCount(uint256 _jobId) external view returns (uint256) {
@@ -483,5 +433,18 @@ contract NativeOpenWorkJobContract is OApp {
     function getJobStatus(uint256 _jobId) external view returns (JobStatus) {
         require(jobs[_jobId].id != 0, "Job does not exist");
         return jobs[_jobId].status;
+    }
+    
+    function decomposeJobId(uint256 _compositeJobId) external pure returns (uint32 extractedChainId, uint256 localJobId) {
+        extractedChainId = uint32(_compositeJobId >> 128);
+        localJobId = uint256(uint128(_compositeJobId));
+    }
+    
+    function jobExists(uint256 _jobId) external view returns (bool) {
+        return jobs[_jobId].id != 0;
+    }
+    
+    function isJobFromChain(uint256 _jobId, uint32 _chainId) external pure returns (bool) {
+        return uint32(_jobId >> 128) == _chainId;
     }
 }
