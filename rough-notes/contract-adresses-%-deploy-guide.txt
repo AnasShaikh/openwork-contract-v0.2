@@ -6,9 +6,11 @@ Local openwork job contract - 0x08f1785174f56600bA22F8d26067b19F4C3E4231
 - then call the set peer function and set the native openwork job contract as the peer
 - then call the set EID function and set the native chain dest. id (LZ dest. ID not chain ID) 
 
+
 NativeOpenWork Job contract - 0x9f1942b8950C333Bee9a39CA2985e8fd0244eaC1
 - deploy with 
     layerzero endpoint address of the chain you are deploying to
     owner address which is your own address
 - then call the set peer function and set the local openwork job contract as the peer
+- add authorised local contract
 

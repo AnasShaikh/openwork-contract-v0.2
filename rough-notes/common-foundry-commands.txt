@@ -7,4 +7,4 @@ native openwork contract - forge verify-contract 0x9f1942b8950C333Bee9a39CA2985e
 
 deploy - 
 forge script script/Set-peers-both-job-contracts.s.sol --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
-forge script script/Deploy-local-ow-job.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
+forge script script/OpenWorkJobTest.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
