@@ -14,6 +14,9 @@ interface IMainDAO {
 }
 
 contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
+    // Cross-chain sender contract address (authorized to send stake data) - for backward compatibility
+    address public authorizedSender;
+    
     // Main DAO contract for cross-contract calls
     IMainDAO public mainDAO;
     
@@ -21,8 +24,14 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
     uint256 public proposalStakeThreshold = 100 * 10**18;
     uint256 public votingStakeThreshold = 50 * 10**18;
     
+    // LayerZero configuration
+    bool public useLayerZero = true;
+    
     // Cross-chain execution tracking
     mapping(bytes32 => bool) public executedMessages;
+    
+    // Access control for multiple local contracts (LayerZero)
+    mapping(uint32 => mapping(bytes32 => bool)) public authorizedLocalContracts;
     
     struct Stake {
         uint256 amount;
@@ -49,11 +58,19 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
     
     // Events
     event StakeDataReceived(address indexed staker, uint256 amount, bool isActive);
+    event AuthorizedSenderUpdated(address indexed oldSender, address indexed newSender);
     event EarnerUpdated(address indexed earner, uint256 newBalance, uint256 totalGovernanceActions);
     event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
     event CrossContractCallFailed(address indexed account, string reason);
     event CrossContractCallSuccess(address indexed account);
     event CrossChainMessageReceived(bytes32 indexed messageId, string indexed messageType, address indexed executor);
+    event LocalContractAuthorized(uint32 indexed eid, bytes32 indexed localContract);
+    event LocalContractDeauthorized(uint32 indexed eid, bytes32 indexed localContract);
+    
+    modifier onlyAuthorizedSender() {
+        require(msg.sender == authorizedSender, "Not authorized sender");
+        _;
+    }
     
     constructor(
         address initialOwner,
@@ -69,8 +86,28 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         Ownable(initialOwner)
     {}
     
+    // LayerZero configuration
+    function setUseLayerZero(bool _useLayerZero) external onlyOwner {
+        useLayerZero = _useLayerZero;
+    }
+    
+    // Access control functions for multiple local contracts
+    function addAuthorizedLocal(uint32 _eid, bytes32 _localContract) external onlyOwner {
+        authorizedLocalContracts[_eid][_localContract] = true;
+        emit LocalContractAuthorized(_eid, _localContract);
+    }
+    
+    function removeAuthorizedLocal(uint32 _eid, bytes32 _localContract) external onlyOwner {
+        authorizedLocalContracts[_eid][_localContract] = false;
+        emit LocalContractDeauthorized(_eid, _localContract);
+    }
+    
+    function isAuthorizedLocal(uint32 _eid, bytes32 _localContract) external view returns (bool) {
+        return authorizedLocalContracts[_eid][_localContract];
+    }
+    
     function _lzReceive(
-        Origin calldata, // _origin
+        Origin calldata _origin,
         bytes32 _guid,
         bytes calldata payload,
         address,
@@ -79,6 +116,9 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         // Prevent replay attacks
         require(!executedMessages[_guid], "Message already executed");
         executedMessages[_guid] = true;
+        
+        // Verify sender is authorized
+        require(authorizedLocalContracts[_origin.srcEid][_origin.sender], "Unauthorized local contract");
         
         string memory messageType = abi.decode(payload, (string));
         
@@ -89,6 +129,13 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
                 abi.decode(payload, (string, address, uint256, uint256, uint256, bool));
             updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
         }
+    }
+    
+    // Set authorized sender (main staking contract) - for backward compatibility
+    function setAuthorizedSender(address _sender) external onlyOwner {
+        address oldSender = authorizedSender;
+        authorizedSender = _sender;
+        emit AuthorizedSenderUpdated(oldSender, _sender);
     }
     
     // Set main DAO contract address
@@ -109,14 +156,23 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         }
     }
     
-    // Internal function to update stake data
+    // Receive stake data from main contract - now supports both LayerZero and direct calls
     function updateStakeData(
         address staker,
         uint256 amount,
         uint256 unlockTime,
         uint256 durationMinutes,
         bool isActive
-    ) internal {
+    ) public {
+        // Check authorization based on call type
+        if (useLayerZero) {
+            // LayerZero calls are authorized in _lzReceive
+            require(msg.sender == address(this), "LayerZero calls only");
+        } else {
+            // Direct calls require authorized sender
+            require(msg.sender == authorizedSender, "Not authorized sender");
+        }
+        
         stakes[staker] = Stake({
             amount: amount,
             unlockTime: unlockTime,
@@ -135,14 +191,14 @@ contract nativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OApp {
         emit StakeDataReceived(staker, amount, isActive);
     }
     
-    // Public function for direct calls
+    // Public function for direct calls (backward compatibility)
     function updateStakeDataDirect(
         address staker,
         uint256 amount,
         uint256 unlockTime,
         uint256 durationMinutes,
         bool isActive
-    ) external {
+    ) external onlyAuthorizedSender {
         updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
     }
     
