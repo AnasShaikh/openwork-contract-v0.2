@@ -12,5 +12,9 @@ forge script script/DeployStringSender.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL -
 
 forge script script/DeployStringSender.sol --rpc-url ethereum_sepolia --broadcast --verify
 
-local ow job - 0x70505c087EE7347562CD7aa0Ee5309b25Fc7cB2f
-native - 0x9cfA0fA7C50c6ebA90cA3104baF4e07edeAb216F
+
+forge script script/deploy-bridge-test.s.sol --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --broadcast --verify --etherscan-api-key $ETHERSCAN_API_KEY
+
+
+"contractName": "StringSender",
+      "contractAddress": "0xc7d443584e0ea17acc517ec55b2838900ffe19d7",
