@@ -7,9 +7,10 @@ native openwork contract -
 forge verify-contract 0x9cfA0fA7C50c6ebA90cA3104baF4e07edeAb216F src/bridged/native-openwork-job-refined.sol:NativeOpenWorkJobContract --etherscan-api-key $OPSCAN_API_KEY --chain 11155420 --constructor-args $(cast abi-encode "constructor(address,address)" "0x6EDCE65403992e310A62460808c4b910D972f10f" "0xaA6816876280c5A685Baf3D9c214A092c7f3F6Ef")
 
 deploy - 
-forge script script/Deploy-native-ow-job.s.sol --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
-forge script script/Deploy-native-ow-job.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
+forge script script/DeployStringSender.sol --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
+forge script script/DeployStringSender.sol --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
 
+forge script script/DeployStringSender.sol --rpc-url ethereum_sepolia --broadcast --verify
 
 local ow job - 0x70505c087EE7347562CD7aa0Ee5309b25Fc7cB2f
 native - 0x9cfA0fA7C50c6ebA90cA3104baF4e07edeAb216F
