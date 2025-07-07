@@ -575,6 +575,12 @@ contract RewardsContract is OAppReceiver, ReentrancyGuard {
         currentTotalPlatformPayments = newTotal;
         emit PlatformTotalUpdated(newTotal);
     }
+
+            // Add this function to your Native and Rewards contracts  
+    function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
+        peers[_eid] = _peer;
+        emit PeerSet(_eid, _peer);
+    }
     
     function emergencyUpdateUserJobRewards(address user, uint256 newCumulativeEarnings, uint256 newTotalTokens) external onlyOwner {
         userCumulativeEarnings[user] = newCumulativeEarnings;

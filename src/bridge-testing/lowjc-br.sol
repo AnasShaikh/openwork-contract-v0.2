@@ -662,7 +662,13 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         totalPlatformPayments = newTotal;
         emit PlatformTotalUpdated(newTotal);
     }
-    
+
+    // Add this function to your Local contract
+    function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
+        peers[_eid] = _peer;
+        emit PeerSet(_eid, _peer);
+    }
+        
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");

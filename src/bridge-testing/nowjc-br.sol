@@ -737,6 +737,12 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         
         emit UserRated(_jobId, _rater, _userToRate, _rating);
     }
+
+        // Add this function to your Native and Rewards contracts  
+    function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
+        peers[_eid] = _peer;
+        emit PeerSet(_eid, _peer);
+    }
     
     function getRating(address _user) public view returns (uint256) {
         uint256[] memory ratings = userRatings[_user];
