@@ -7,7 +7,19 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract StringSender is OAppSender {
     
+    /// @notice Emitted when a message is sent to another chain.
+    event MessageSent(string message, uint32 dstEid);
+    
+    /// @notice Emitted when a batch message is sent to multiple chains.
+    event BatchMessageSent(string message, uint32[] dstEids);
+    
     constructor(address _endpoint, address _owner) OAppCore(_endpoint, _owner) Ownable(_owner) {}
+
+    // Override to change fee check from equivalency to < since batch fees are cumulative
+    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
+        if (msg.value < _nativeFee) revert("Insufficient native fee");
+        return _nativeFee;
+    }
 
     // Original single-chain function
     function sendString(
@@ -23,51 +35,11 @@ contract StringSender is OAppSender {
             MessagingFee(msg.value, 0),
             payable(msg.sender)
         );
+        
+        emit MessageSent(_message, _dstEid);
     }
 
-    // New multi-chain function - sends to 2 chains in one call
-    function sendStringToTwoChains(
-        uint32 _dstEid1,
-        uint32 _dstEid2,
-        string calldata _message,
-        bytes calldata _options1,
-        bytes calldata _options2
-    ) external payable {
-        bytes memory payload = abi.encode(_message);
-        
-        // Get quotes for both chains
-        MessagingFee memory fee1 = _quote(_dstEid1, payload, _options1, false);
-        MessagingFee memory fee2 = _quote(_dstEid2, payload, _options2, false);
-        
-        uint256 totalFee = fee1.nativeFee + fee2.nativeFee;
-        require(msg.value >= totalFee, "Insufficient fee provided");
-        
-        // Send to first chain
-        _lzSend(
-            _dstEid1,
-            payload, 
-            _options1,
-            MessagingFee(fee1.nativeFee, 0),
-            payable(msg.sender)
-        );
-        
-        // Send to second chain
-        _lzSend(
-            _dstEid2,
-            payload, 
-            _options2,
-            MessagingFee(fee2.nativeFee, 0),
-            payable(msg.sender)
-        );
-        
-        // Refund excess fee if any
-        uint256 excess = msg.value - totalFee;
-        if (excess > 0) {
-            payable(msg.sender).transfer(excess);
-        }
-    }
-
-    // Alternative approach using arrays for more flexibility
+    // Improved multi-chain function using BatchSendMock pattern
     function sendStringToMultipleChains(
         uint32[] calldata _dstEids,
         string calldata _message,
@@ -77,41 +49,75 @@ contract StringSender is OAppSender {
         require(_dstEids.length > 0, "No destinations provided");
         
         bytes memory payload = abi.encode(_message);
-        uint256 totalFee = 0;
         
-        // Calculate total fee required
-        for (uint256 i = 0; i < _dstEids.length; i++) {
-            MessagingFee memory fee = _quote(_dstEids[i], payload, _options[i], false);
-            totalFee += fee.nativeFee;
-        }
+        // Calculate total fees upfront (fail-fast pattern)
+        MessagingFee memory totalFee = quoteMultiple(_dstEids, _message, _options, false);
+        require(msg.value >= totalFee.nativeFee, "Insufficient fee provided");
         
-        require(msg.value >= totalFee, "Insufficient fee provided");
-        
-        uint256 usedFee = 0;
+        uint256 totalNativeFeeUsed = 0;
+        uint256 remainingValue = msg.value;
         
         // Send to all destination chains
         for (uint256 i = 0; i < _dstEids.length; i++) {
             MessagingFee memory fee = _quote(_dstEids[i], payload, _options[i], false);
             
+            totalNativeFeeUsed += fee.nativeFee;
+            remainingValue -= fee.nativeFee;
+            
+            // Granular fee tracking per destination
+            require(remainingValue >= 0, "Insufficient fee for this destination");
+            
             _lzSend(
                 _dstEids[i],
                 payload, 
                 _options[i],
-                MessagingFee(fee.nativeFee, 0),
+                fee,
                 payable(msg.sender)
             );
             
-            usedFee += fee.nativeFee;
+            emit MessageSent(_message, _dstEids[i]);
         }
         
-        // Refund excess fee if any
-        uint256 excess = msg.value - usedFee;
-        if (excess > 0) {
-            payable(msg.sender).transfer(excess);
+        emit BatchMessageSent(_message, _dstEids);
+    }
+
+    // Convenience function for exactly two chains
+    function sendStringToTwoChains(
+        uint32 _dstEid1,
+        uint32 _dstEid2,
+        string calldata _message,
+        bytes calldata _options1,
+        bytes calldata _options2
+    ) external payable {
+        uint32[] memory dstEids = new uint32[](2);
+        bytes[] memory options = new bytes[](2);
+        
+        dstEids[0] = _dstEid1;
+        dstEids[1] = _dstEid2;
+        options[0] = _options1;
+        options[1] = _options2;
+        
+        // Use the main multi-chain function
+        this.sendStringToMultipleChains{value: msg.value}(dstEids, _message, options);
+    }
+
+    // Internal function to calculate total fees for multiple destinations
+    function quoteMultiple(
+        uint32[] memory _dstEids,
+        string memory _message,
+        bytes[] memory _options,
+        bool _payInLzToken
+    ) internal view returns (MessagingFee memory totalFee) {
+        bytes memory payload = abi.encode(_message);
+        
+        for (uint256 i = 0; i < _dstEids.length; i++) {
+            MessagingFee memory fee = _quote(_dstEids[i], payload, _options[i], _payInLzToken);
+            totalFee.nativeFee += fee.nativeFee;
+            totalFee.lzTokenFee += fee.lzTokenFee;
         }
     }
 
-    // Original quote function (fixed syntax)
+    // Original quote function
     function quote(
         uint32 _dstEid, 
         string calldata _message, 
@@ -155,6 +161,24 @@ contract StringSender is OAppSender {
             MessagingFee memory fee = _quote(_dstEids[i], payload, _options[i], false);
             fees[i] = fee.nativeFee;
             totalFee += fee.nativeFee;
+        }
+    }
+
+    // Public quote function that returns MessagingFee struct (similar to BatchSendMock)
+    function quoteMultipleWithStruct(
+        uint32[] calldata _dstEids,
+        string calldata _message,
+        bytes[] calldata _options,
+        bool _payInLzToken
+    ) external view returns (MessagingFee memory totalFee) {
+        require(_dstEids.length == _options.length, "Arrays length mismatch");
+        
+        bytes memory payload = abi.encode(_message);
+        
+        for (uint256 i = 0; i < _dstEids.length; i++) {
+            MessagingFee memory fee = _quote(_dstEids[i], payload, _options[i], _payInLzToken);
+            totalFee.nativeFee += fee.nativeFee;
+            totalFee.lzTokenFee += fee.lzTokenFee;
         }
     }
 }

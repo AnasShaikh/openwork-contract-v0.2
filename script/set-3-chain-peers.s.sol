@@ -7,9 +7,9 @@ import "../src/bridge-testing/StringReceiver.sol";
 
 contract Set3ChainPeers is Script {
     // Contract addresses
-    address constant ETH_SENDER = 0xC7D443584E0eA17acc517Ec55B2838900FfE19D7;
-    address constant ARB_RECEIVER = 0xa299bf0bbF0124D49d672DB7A35E397853CBF691;
-    address constant OP_RECEIVER = 0x1999366B4a970c712Ff417aF1c4Fe5Fb14da359f;
+    address constant ETH_SENDER = 0xE1Ba069CF6402c763097F3cE72C0AD973403c85B;
+    address constant ARB_RECEIVER = 0x5Ea4BC548FeDBDD7D5a5cB178f7bc0433FA34935;
+    address constant OP_RECEIVER = 0x8C47Aa93Ec73f686c94fAff1dC3E8D6e5e22ce52;
     
     // LayerZero Endpoint IDs for Sepolia testnets
     uint32 constant ETH_SEPOLIA_EID = 40161;
