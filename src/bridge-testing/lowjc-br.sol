@@ -100,51 +100,6 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         defaultOptions = _defaultOptions;
     }
     
-    // Internal send functions
-    function _sendToNative(string memory _message) internal returns (uint256 usedFee) {
-        bytes memory payload = abi.encode(_message);
-        MessagingFee memory fee = _quote(nativeContractEid, payload, defaultOptions, false);
-        require(msg.value >= fee.nativeFee, "Insufficient fee provided");
-        
-        _lzSend(nativeContractEid, payload, defaultOptions, MessagingFee(fee.nativeFee, 0), payable(msg.sender));
-        return fee.nativeFee;
-    }
-    
-    function _sendToRewards(string memory _message) internal returns (uint256 usedFee) {
-        bytes memory payload = abi.encode(_message);
-        MessagingFee memory fee = _quote(rewardsContractEid, payload, defaultOptions, false);
-        require(msg.value >= fee.nativeFee, "Insufficient fee provided");
-        
-        _lzSend(rewardsContractEid, payload, defaultOptions, MessagingFee(fee.nativeFee, 0), payable(msg.sender));
-        return fee.nativeFee;
-    }
-    
-    function _sendToBothChains(string memory _nativeMessage, string memory _rewardsMessage) internal {
-        bytes memory nativePayload = abi.encode(_nativeMessage);
-        bytes memory rewardsPayload = abi.encode(_rewardsMessage);
-        
-        MessagingFee memory nativeFee = _quote(nativeContractEid, nativePayload, defaultOptions, false);
-        MessagingFee memory rewardsFee = _quote(rewardsContractEid, rewardsPayload, defaultOptions, false);
-        
-        uint256 totalFee = nativeFee.nativeFee + rewardsFee.nativeFee;
-        require(msg.value >= totalFee, "Insufficient fee provided");
-        
-        _lzSend(nativeContractEid, nativePayload, defaultOptions, MessagingFee(nativeFee.nativeFee, 0), payable(msg.sender));
-        _lzSend(rewardsContractEid, rewardsPayload, defaultOptions, MessagingFee(rewardsFee.nativeFee, 0), payable(msg.sender));
-        
-        uint256 excess = msg.value - totalFee;
-        if (excess > 0) {
-            payable(msg.sender).transfer(excess);
-        }
-    }
-    
-    function _refundExcess(uint256 usedFee) internal {
-        uint256 excess = msg.value - usedFee;
-        if (excess > 0) {
-            payable(msg.sender).transfer(excess);
-        }
-    }
-    
     // Configuration functions
     function setNativeContractEid(uint32 _eid) external onlyOwner {
         nativeContractEid = _eid;
@@ -195,6 +150,16 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             Strings.toHexString(uint256(uint160(_referrerAddress)), 20)
         ));
         
+        bytes memory profilePayload = abi.encode(profileData);
+        bytes memory rewardsPayload = abi.encode(rewardsData);
+        
+        // Get quotes for both chains
+        MessagingFee memory nativeFee = _quote(nativeContractEid, profilePayload, defaultOptions, false);
+        MessagingFee memory rewardsFee = _quote(rewardsContractEid, rewardsPayload, defaultOptions, false);
+        
+        uint256 totalFee = nativeFee.nativeFee + rewardsFee.nativeFee;
+        require(msg.value >= totalFee, "Insufficient fee provided");
+        
         // Update local state
         profiles[msg.sender] = Profile({
             userAddress: msg.sender,
@@ -204,7 +169,29 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         });
         hasProfile[msg.sender] = true;
         
-        _sendToBothChains(profileData, rewardsData);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            profilePayload, 
+            defaultOptions,
+            MessagingFee(nativeFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Send to rewards contract
+        _lzSend(
+            rewardsContractEid,
+            rewardsPayload, 
+            defaultOptions,
+            MessagingFee(rewardsFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - totalFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit ProfileCreated(msg.sender, _ipfsHash, _referrerAddress);
     }
@@ -262,8 +249,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             }));
         }
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit JobPosted(jobId, msg.sender, _jobDetailHash);
         emit JobStatusChanged(jobId, JobStatus.Open);
@@ -325,8 +324,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             }));
         }
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit JobApplication(_jobId, appId, msg.sender, _appHash);
     }
@@ -376,8 +387,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.currentLockedAmount = firstAmount;
         job.totalEscrowed += firstAmount;
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit JobStarted(_jobId, _appId, app.applicant, _useAppMilestones);
         emit JobStatusChanged(_jobId, JobStatus.InProgress);
@@ -403,8 +426,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         
         jobs[_jobId].workSubmissions.push(_submissionHash);
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit WorkSubmitted(_jobId, msg.sender, _submissionHash, jobs[_jobId].currentMilestone);
     }
@@ -435,6 +470,16 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             Strings.toString(amount)
         ));
         
+        bytes memory nativePayload = abi.encode(nativeMessage);
+        bytes memory rewardsPayload = abi.encode(rewardsMessage);
+        
+        // Get quotes for both chains
+        MessagingFee memory nativeFee = _quote(nativeContractEid, nativePayload, defaultOptions, false);
+        MessagingFee memory rewardsFee = _quote(rewardsContractEid, rewardsPayload, defaultOptions, false);
+        
+        uint256 totalFee = nativeFee.nativeFee + rewardsFee.nativeFee;
+        require(msg.value >= totalFee, "Insufficient fee provided");
+        
         // Update local state
         usdtToken.safeTransfer(job.selectedApplicant, amount);
         job.totalPaid += amount;
@@ -447,7 +492,29 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        _sendToBothChains(nativeMessage, rewardsMessage);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            nativePayload, 
+            defaultOptions,
+            MessagingFee(nativeFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Send to rewards contract
+        _lzSend(
+            rewardsContractEid,
+            rewardsPayload, 
+            defaultOptions,
+            MessagingFee(rewardsFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - totalFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit PaymentReleased(_jobId, msg.sender, job.selectedApplicant, amount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
@@ -479,8 +546,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.currentLockedAmount = nextAmount;
         job.totalEscrowed += nextAmount;
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit MilestoneLocked(_jobId, job.currentMilestone, nextAmount);
         emit USDTEscrowed(_jobId, msg.sender, nextAmount);
@@ -518,6 +597,16 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             Strings.toString(releaseAmount)
         ));
         
+        bytes memory nativePayload = abi.encode(nativeMessage);
+        bytes memory rewardsPayload = abi.encode(rewardsMessage);
+        
+        // Get quotes for both chains
+        MessagingFee memory nativeFee = _quote(nativeContractEid, nativePayload, defaultOptions, false);
+        MessagingFee memory rewardsFee = _quote(rewardsContractEid, rewardsPayload, defaultOptions, false);
+        
+        uint256 totalFee = nativeFee.nativeFee + rewardsFee.nativeFee;
+        require(msg.value >= totalFee, "Insufficient fee provided");
+        
         // Update local state
         usdtToken.safeTransfer(job.selectedApplicant, releaseAmount);
         job.totalPaid += releaseAmount;
@@ -534,7 +623,29 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        _sendToBothChains(nativeMessage, rewardsMessage);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            nativePayload, 
+            defaultOptions,
+            MessagingFee(nativeFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Send to rewards contract
+        _lzSend(
+            rewardsContractEid,
+            rewardsPayload, 
+            defaultOptions,
+            MessagingFee(rewardsFee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - totalFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, releaseAmount, nextAmount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
@@ -566,8 +677,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         jobRatings[_jobId][_userToRate] = _rating;
         userRatings[_userToRate].push(_rating);
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit UserRated(_jobId, msg.sender, _userToRate, _rating);
     }
@@ -599,8 +722,20 @@ contract CrossChainOpenWorkJobContract is OAppSender, ReentrancyGuard {
         
         profiles[msg.sender].portfolioHashes.push(_portfolioHash);
         
-        uint256 usedFee = _sendToNative(message);
-        _refundExcess(usedFee);
+        // Send to native contract
+        _lzSend(
+            nativeContractEid,
+            payload, 
+            defaultOptions,
+            MessagingFee(fee.nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        // Refund excess
+        uint256 excess = msg.value - fee.nativeFee;
+        if (excess > 0) {
+            payable(msg.sender).transfer(excess);
+        }
         
         emit PortfolioAdded(msg.sender, _portfolioHash);
     }

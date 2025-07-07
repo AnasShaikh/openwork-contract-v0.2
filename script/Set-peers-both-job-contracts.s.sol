@@ -6,14 +6,10 @@ interface IOApp {
     function setPeer(uint32 _eid, bytes32 _peer) external;
 }
 
-interface INativeContract {
-    function addAuthorizedLocal(uint32 _eid, bytes32 _localContract) external;
-}
-
-contract SetPeersScript is Script {
+contract SetPeers is Script {
     // Contract addresses
-    address constant LOCAL_CONTRACT = 0x08f1785174f56600bA22F8d26067b19F4C3E4231;  // Arbitrum Sepolia
-    address constant NATIVE_CONTRACT = 0x9f1942b8950C333Bee9a39CA2985e8fd0244eaC1; // Optimism Sepolia
+    address constant LOWJC_ADDRESS = 0x4Fe04e1fc08B7aa1813D0284eA3469C69d46ff14;  // Arbitrum Sepolia
+    address constant NOWJC_ADDRESS = 0x68B9dA88e948899e8FD766Ec18c2424afEA55D27; // Optimism Sepolia
     
     // EIDs
     uint32 constant ARB_SEPOLIA_EID = 40231;
@@ -22,34 +18,18 @@ contract SetPeersScript is Script {
     function run() external {
         vm.startBroadcast();
         
-        // Convert addresses to bytes32
-        bytes32 localContractBytes32 = bytes32(uint256(uint160(LOCAL_CONTRACT)));
-        bytes32 nativeContractBytes32 = bytes32(uint256(uint160(NATIVE_CONTRACT)));
+        bytes32 lowjcBytes32 = bytes32(uint256(uint160(LOWJC_ADDRESS)));
+        bytes32 nowjcBytes32 = bytes32(uint256(uint160(NOWJC_ADDRESS)));
         
-        // Determine which network we're on and set appropriate peer
-        uint256 chainId = block.chainid;
-        
-        if (chainId == 421614) { // Arbitrum Sepolia
-            console.log("Setting peer on Arbitrum Sepolia (Local Contract)");
-            console.log("Local Contract:", LOCAL_CONTRACT);
-            console.log("Setting peer to Native Contract on OP Sepolia");
+        if (block.chainid == 421614) { // Arbitrum Sepolia
+            console.log("Setting peer on LOWJC (Arbitrum)");
+            IOApp(LOWJC_ADDRESS).setPeer(OP_SEPOLIA_EID, nowjcBytes32);
+            console.log("LOWJC peer set to NOWJC");
             
-            // Set peer: Local contract points to Native contract on OP Sepolia
-            IOApp(LOCAL_CONTRACT).setPeer(OP_SEPOLIA_EID, nativeContractBytes32);
-            console.log("Peer set successfully on Local Contract");
-            
-        } else if (chainId == 11155420) { // Optimism Sepolia
-            console.log("Setting peer on Optimism Sepolia (Native Contract)");
-            console.log("Native Contract:", NATIVE_CONTRACT);
-            console.log("Setting peer to Local Contract on Arb Sepolia");
-            
-            // Set peer: Native contract points to Local contract on Arb Sepolia
-            IOApp(NATIVE_CONTRACT).setPeer(ARB_SEPOLIA_EID, localContractBytes32);
-            console.log("Peer set successfully on Native Contract");
-            
-            // Also authorize the local contract
-            INativeContract(NATIVE_CONTRACT).addAuthorizedLocal(ARB_SEPOLIA_EID, localContractBytes32);
-            console.log("Local contract authorized successfully");
+        } else if (block.chainid == 11155420) { // Optimism Sepolia
+            console.log("Setting peer on NOWJC (Optimism)");
+            IOApp(NOWJC_ADDRESS).setPeer(ARB_SEPOLIA_EID, lowjcBytes32);
+            console.log("NOWJC peer set to LOWJC");
             
         } else {
             revert("Unsupported network");
