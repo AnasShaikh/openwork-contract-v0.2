@@ -68,7 +68,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     // User tracking for job-based rewards
     mapping(address => uint256) public userCumulativeEarnings;
     mapping(address => uint256) public userTotalOWTokens;
-    
     // Reward bands array
     RewardBand[] public rewardBands;
 
@@ -102,8 +101,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     event UserRated(string indexed jobId, address indexed rater, address indexed rated, uint256 rating);
     event PortfolioAdded(address indexed user, string portfolioHash);
     event JobStatusChanged(string indexed jobId, JobStatus newStatus);
-    event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
-    
+    event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);    
     // New rewards events
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newCumulativeEarnings, uint256 newTotalTokens);
     event LayerZeroMessageReceived(uint32 srcEid, string functionName, string data);
@@ -738,12 +736,11 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit UserRated(_jobId, _rater, _userToRate, _rating);
     }
 
-        // Add this function to your Native and Rewards contracts  
     function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
         peers[_eid] = _peer;
         emit PeerSet(_eid, _peer);
     }
-    
+
     function getRating(address _user) public view returns (uint256) {
         uint256[] memory ratings = userRatings[_user];
         if (ratings.length == 0) {
