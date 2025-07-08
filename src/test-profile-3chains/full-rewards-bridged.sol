@@ -52,10 +52,6 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     RewardBand[] public rewardBands;
     GovernanceRewardBand[] public governanceRewardBands;
     
-    // Authorization
-    mapping(address => bool) public authorizedContracts;
-    mapping(uint32 => bool) public authorizedChains;
-    
     // Events
     event ProfileCreated(address indexed user, address indexed referrer, uint32 indexed sourceChain);
     event PaymentProcessed(
@@ -76,26 +72,12 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     event GovernanceActionNotified(address indexed user, uint256 newActionCount);
     event PlatformTotalUpdated(uint256 newTotal);
     event ContractUpdated(string contractType, address newAddress);
-    event AuthorizedContractUpdated(address indexed contractAddr, bool authorized);
-    event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     
     constructor(address _endpoint, address _owner, address _openworkToken) OAppCore(_endpoint, _owner) Ownable(_owner) {
         openworkToken = IERC20(_openworkToken);
         _initializeRewardBands();
         _initializeGovernanceRewardBands();
-    }
-    
-    // ==================== CHAIN AUTHORIZATION ====================
-    
-    /**
-     * @notice Set authorized chains that can send messages
-     * @param _chainEid Chain endpoint ID
-     * @param _authorized Whether the chain is authorized
-     */
-    function setAuthorizedChain(uint32 _chainEid, bool _authorized) external onlyOwner {
-        authorizedChains[_chainEid] = _authorized;
-        emit AuthorizedChainUpdated(_chainEid, _authorized);
     }
 
     // ==================== LAYERZERO MESSAGE HANDLING ====================
@@ -112,8 +94,7 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
         address, // _executor (not used)
         bytes calldata // _extraData (not used)
     ) internal override {
-        // Verify the source chain is authorized
-        require(authorizedChains[_origin.srcEid], "Unauthorized source chain");
+        // LayerZero peer settings already handle authorization
         
         // Decode function name and route to appropriate handler
         (string memory functionName) = abi.decode(_message, (string));
@@ -131,13 +112,13 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     
     function _handleCreateProfile(bytes calldata _message, uint32 _sourceChain) internal {
         (, address user, address referrer) = abi.decode(_message, (string, address, address));
-        createProfile(user, referrer);
+        _createProfile(user, referrer, _sourceChain);
         emit CrossChainMessageReceived("createProfile", _sourceChain, _message);
     }
     
     function _handleUpdateRewardsOnPayment(bytes calldata _message, uint32 _sourceChain) internal {
         (, address jobGiver, address jobTaker, uint256 amount) = abi.decode(_message, (string, address, address, uint256));
-        updateRewardsOnPayment(jobGiver, jobTaker, amount);
+        _updateRewardsOnPayment(jobGiver, jobTaker, amount);
         emit CrossChainMessageReceived("updateRewardsOnPayment", _sourceChain, _message);
     }
     
@@ -151,11 +132,6 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     function setMainDAO(address _mainDAO) external onlyOwner {
         mainDAO = IMainDAO(_mainDAO);
         emit ContractUpdated("MainDAO", _mainDAO);
-    }
-    
-    function setAuthorizedContract(address _contract, bool _authorized) external onlyOwner {
-        authorizedContracts[_contract] = _authorized;
-        emit AuthorizedContractUpdated(_contract, _authorized);
     }
     
     // REWARD BANDS INITIALIZATION
@@ -208,27 +184,19 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
         governanceRewardBands.push(GovernanceRewardBand(131072000 * 1e18, 262144000 * 1e18, 19 * 1e16));
     }
     
-    // PROFILE AND PAYMENT FUNCTIONS CALLED BY LOCAL CONTRACT
+    // INTERNAL CORE FUNCTIONS (called by message handlers)
     
-    function createProfile(address user, address referrer) public {
-        // Allow both direct calls (authorized contracts) and cross-chain calls
-        if (msg.sender != address(this)) {
-            require(authorizedContracts[msg.sender], "Not authorized");
-        }
+    function _createProfile(address user, address referrer, uint32 sourceChain) internal {
         require(user != address(0), "Invalid user address");
         
         if (referrer != address(0) && referrer != user) {
             userReferrers[user] = referrer;
         }
         
-        emit ProfileCreated(user, referrer, 0); // 0 for direct calls, sourceChain set in handler for cross-chain
+        emit ProfileCreated(user, referrer, sourceChain);
     }
     
-    function updateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount) public {
-        // Allow both direct calls (authorized contracts) and cross-chain calls
-        if (msg.sender != address(this)) {
-            require(authorizedContracts[msg.sender], "Not authorized");
-        }
+    function _updateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount) internal {
         require(jobGiver != address(0) && jobTaker != address(0), "Invalid addresses");
         require(amount > 0, "Amount must be greater than 0");
         
@@ -320,9 +288,7 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     
     // GOVERNANCE REWARDS FUNCTIONS
     
-    function notifyGovernanceAction(address account) external {
-        require(authorizedContracts[msg.sender], "Not authorized");
-        
+    function notifyGovernanceAction(address account) external onlyOwner {
         governanceActionCount[account]++;
         emit GovernanceActionNotified(account, governanceActionCount[account]);
     }
@@ -477,10 +443,6 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
         uint256 currentCumulative = userCumulativeEarnings[user];
         uint256 newCumulative = currentCumulative + additionalAmount;
         return calculateTokensForRange(currentCumulative, newCumulative);
-    }
-    
-    function isChainAuthorized(uint32 chainEid) external view returns (bool) {
-        return authorizedChains[chainEid];
     }
     
     // ADMIN FUNCTIONS
