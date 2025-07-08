@@ -1,33 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
+import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
+import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 
-interface INativeOpenWorkJobContract {
-    function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external;
-    function postJob(string memory _jobId, address _jobGiver, string memory _jobDetailHash, string[] memory _descriptions, uint256[] memory _amounts) external;
-    function applyToJob(address _applicant, string memory _jobId, string memory _applicationHash, string[] memory _descriptions, uint256[] memory _amounts) external;
-    function startJob(address _jobGiver, string memory _jobId, uint256 _applicationId, bool _useApplicantMilestones) external;
-    function submitWork(address _applicant, string memory _jobId, string memory _submissionHash) external;
-    function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external;
-    function lockNextMilestone(address _caller, string memory _jobId, uint256 _lockedAmount) external;
-    function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external;
-    function rate(address _rater, string memory _jobId, address _userToRate, uint256 _rating) external;
-    function addPortfolio(address _user, string memory _portfolioHash) external;
-}
-
-interface IRewardsContract {
-    function createProfile(address user, address referrer) external;
-    function updateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount) external;
-}
-
-contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
+contract CrossChainLocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     enum JobStatus { Open, InProgress, Completed, Cancelled }
@@ -85,10 +67,10 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     
     IERC20 public immutable usdtToken;    
     uint32 public immutable chainId;
-    uint32 public nativeChainEid;
-    uint32 public rewardsChainEid;
-    INativeOpenWorkJobContract public nativeContract;
-    IRewardsContract public rewardsContract;
+    
+    // Chain endpoints for cross-chain communication
+    uint32 public rewardsChainEid;    // Chain where RewardsContract is deployed
+    uint32 public nativeChainEid;     // Chain where NativeOpenWorkJobContract is deployed
     
     // Events
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
@@ -103,134 +85,48 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     event USDTEscrowed(string indexed jobId, address indexed jobGiver, uint256 amount);
     event JobStatusChanged(string indexed jobId, JobStatus newStatus);
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
-    event RewardsContractUpdated(address indexed newRewardsContract);
     event PlatformTotalUpdated(uint256 newTotal);
+    event CrossChainMessageSent(string indexed functionName, uint32[] dstEids, bytes payload);
     
     constructor(
+        address _endpoint,
         address _owner, 
         address _usdtToken, 
-        uint32 _chainId, 
-        address _nativeContract,
-        address _endpoint,
-        uint32 _nativeChainEid,
-        uint32 _rewardsChainEid
-    ) OAppCore(_endpoint, _owner) Ownable(msg.sender) {
+        uint32 _chainId,
+        uint32 _rewardsChainEid,
+        uint32 _nativeChainEid
+    ) OAppCore(_endpoint, _owner) Ownable(_owner) {
         usdtToken = IERC20(_usdtToken);
         chainId = _chainId;
-        nativeContract = INativeOpenWorkJobContract(_nativeContract);
-        nativeChainEid = _nativeChainEid;
         rewardsChainEid = _rewardsChainEid;
-        transferOwnership(_owner);
+        nativeChainEid = _nativeChainEid;
     }
-
+    
     // Override to change fee check from equivalency to < since batch fees are cumulative
     function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
         if (msg.value < _nativeFee) revert("Insufficient native fee");
         return _nativeFee;
     }
-
-    // Set chain endpoints
-    function setChainEids(uint32 _nativeChainEid, uint32 _rewardsChainEid) external onlyOwner {
-        nativeChainEid = _nativeChainEid;
-        rewardsChainEid = _rewardsChainEid;
-    }
     
-    // Set rewards contract
-    function setRewardsContract(address _rewardsContract) external onlyOwner {
-        require(_rewardsContract != address(0), "Invalid rewards contract address");
-        rewardsContract = IRewardsContract(_rewardsContract);
-        emit RewardsContractUpdated(_rewardsContract);
-    }
-
-    // Quote function for two chains
-    function quoteTwoChains(
-        string calldata _message,
-        bytes calldata _options1,
-        bytes calldata _options2
-    ) external view returns (uint256 totalFee, uint256 fee1, uint256 fee2) {
-        bytes memory payload = abi.encode(_message);
-        
-        MessagingFee memory msgFee1 = _quote(rewardsChainEid, payload, _options1, false);
-        MessagingFee memory msgFee2 = _quote(nativeChainEid, payload, _options2, false);
-        
-        fee1 = msgFee1.nativeFee;
-        fee2 = msgFee2.nativeFee;
-        totalFee = fee1 + fee2;
-    }
-
-    // Quote function for single chain
-    function quoteSingleChain(
-        string calldata _message, 
-        bytes calldata _options
-    ) external view returns (uint256) {
-        bytes memory payload = abi.encode(_message);
-        MessagingFee memory fee = _quote(nativeChainEid, payload, _options, false);
-        return fee.nativeFee;
-    }
-
-    // Send to two chains helper
-    function sendToTwoChains(
-        string memory _message,
-        bytes calldata _options1,
-        bytes calldata _options2
-    ) internal {
-        uint32[] memory dstEids = new uint32[](2);
-        bytes[] memory options = new bytes[](2);
-        
-        dstEids[0] = rewardsChainEid;
-        dstEids[1] = nativeChainEid;
-        options[0] = _options1;
-        options[1] = _options2;
-        
-        bytes memory payload = abi.encode(_message);
-        
-        // Calculate total fees upfront
-        uint256 totalNativeFee = 0;
-        for (uint256 i = 0; i < dstEids.length; i++) {
-            MessagingFee memory fee = _quote(dstEids[i], payload, options[i], false);
-            totalNativeFee += fee.nativeFee;
-        }
-        require(msg.value >= totalNativeFee, "Insufficient fee provided");
-        
-        // Send to all destination chains
-        for (uint256 i = 0; i < dstEids.length; i++) {
-            MessagingFee memory fee = _quote(dstEids[i], payload, options[i], false);
-            
-            _lzSend(
-                dstEids[i],
-                payload, 
-                options[i],
-                fee,
-                payable(msg.sender)
-            );
-        }
-    }
-
-    // Send to single chain helper
-    function sendToNativeChain(
-        string memory _message,
-        bytes calldata _options
-    ) internal {
-        bytes memory payload = abi.encode(_message);
-        MessagingFee memory fee = _quote(nativeChainEid, payload, _options, false);
-        require(msg.value >= fee.nativeFee, "Insufficient fee provided");
-        
-        _lzSend(
-            nativeChainEid,
-            payload, 
-            _options,
-            fee,
-            payable(msg.sender)
-        );
+    /**
+     * @notice Update chain endpoints (admin function)
+     */
+    function updateChainEndpoints(uint32 _rewardsChainEid, uint32 _nativeChainEid) external onlyOwner {
+        rewardsChainEid = _rewardsChainEid;
+        nativeChainEid = _nativeChainEid;
     }
     
     // Profile Management
     function createProfile(
         string memory _ipfsHash, 
         address _referrerAddress,
-        bytes calldata _options1,
-        bytes calldata _options2
+        bytes calldata _rewardsOptions,
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
+        require(!hasProfile[msg.sender], "Profile already exists");
+        require(bytes(_ipfsHash).length > 0, "IPFS hash cannot be empty");
+        
+        // Create profile locally
         profiles[msg.sender] = Profile({
             userAddress: msg.sender,
             ipfsHash: _ipfsHash,
@@ -239,21 +135,23 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         });
         hasProfile[msg.sender] = true;
         
-        // Update local rewards state
-        rewardsContract.createProfile(msg.sender, _referrerAddress);
+        // Send cross-chain messages
+        uint32[] memory dstEids = new uint32[](2);
+        bytes[] memory options = new bytes[](2);
         
-        // Send to both chains via LayerZero
-        string memory message = string(abi.encodePacked(
-            "createProfile:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _ipfsHash,
-            ":",
-            Strings.toHexString(uint160(_referrerAddress), 20)
-        ));
-        sendToTwoChains(message, _options1, _options2);
+        dstEids[0] = rewardsChainEid;
+        dstEids[1] = nativeChainEid;
+        options[0] = _rewardsOptions;
+        options[1] = _nativeOptions;
+        
+        // Encode different payloads for different contracts
+        bytes memory rewardsPayload = abi.encode("createProfile", msg.sender, _referrerAddress);
+        bytes memory nativePayload = abi.encode("createProfile", msg.sender, _ipfsHash, _referrerAddress);
+        
+        _sendToTwoChains(dstEids, rewardsPayload, nativePayload, options);
         
         emit ProfileCreated(msg.sender, _ipfsHash, _referrerAddress);
+        emit CrossChainMessageSent("createProfile", dstEids, abi.encode(msg.sender, _ipfsHash, _referrerAddress));
     }
     
     function getProfile(address _user) public view returns (Profile memory) {
@@ -266,7 +164,7 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         string memory _jobDetailHash, 
         string[] memory _descriptions, 
         uint256[] memory _amounts,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(_descriptions.length > 0, "Must have at least one milestone");
         require(_descriptions.length == _amounts.length, "Descriptions and amounts length mismatch");
@@ -292,19 +190,19 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
             }));
         }
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "postJob:",
-            jobId,
-            ":",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobDetailHash
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("postJob", jobId, msg.sender, _jobDetailHash, _descriptions, _amounts);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit JobPosted(jobId, msg.sender, _jobDetailHash);
         emit JobStatusChanged(jobId, JobStatus.Open);
+        emit CrossChainMessageSent("postJob", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function getJob(string memory _jobId) public view returns (Job memory) {
@@ -318,7 +216,7 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         string memory _appHash, 
         string[] memory _descriptions, 
         uint256[] memory _amounts,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(hasProfile[msg.sender], "Must have profile to apply");
         require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
@@ -348,18 +246,18 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
             }));
         }
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "applyToJob:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            _appHash
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("applyToJob", msg.sender, _jobId, _appHash, _descriptions, _amounts);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit JobApplication(_jobId, appId, msg.sender, _appHash);
+        emit CrossChainMessageSent("applyToJob", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function getApplication(string memory _jobId, uint256 _appId) public view returns (Application memory) {
@@ -368,7 +266,12 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     }
     
     // Job startup
-    function startJob(string memory _jobId, uint256 _appId, bool _useAppMilestones) external nonReentrant {
+    function startJob(
+        string memory _jobId, 
+        uint256 _appId, 
+        bool _useAppMilestones,
+        bytes calldata _nativeOptions
+    ) external payable nonReentrant {
         require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
         
         Application storage app = jobApplications[_jobId][_appId];
@@ -394,18 +297,26 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.currentLockedAmount = firstAmount;
         job.totalEscrowed += firstAmount;
         
-        // Local call to native contract
-        nativeContract.startJob(msg.sender, _jobId, _appId, _useAppMilestones);
+        // Send to native chain
+        bytes memory payload = abi.encode("startJob", msg.sender, _jobId, _appId, _useAppMilestones);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit JobStarted(_jobId, _appId, app.applicant, _useAppMilestones);
         emit JobStatusChanged(_jobId, JobStatus.InProgress);
         emit USDTEscrowed(_jobId, msg.sender, firstAmount);
+        emit CrossChainMessageSent("startJob", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function submitWork(
         string memory _jobId, 
         string memory _submissionHash,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
         require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
@@ -414,24 +325,24 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         
         jobs[_jobId].workSubmissions.push(_submissionHash);
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "submitWork:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            _submissionHash
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("submitWork", msg.sender, _jobId, _submissionHash);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit WorkSubmitted(_jobId, msg.sender, _submissionHash, jobs[_jobId].currentMilestone);
+        emit CrossChainMessageSent("submitWork", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function releasePayment(
         string memory _jobId,
-        bytes calldata _options1,
-        bytes calldata _options2
+        bytes calldata _rewardsOptions,
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         Job storage job = jobs[_jobId];
         require(bytes(job.id).length != 0, "Job does not exist");
@@ -448,33 +359,36 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.totalReleased += amount;
         job.currentLockedAmount = 0;
         
-        // Update local platform total and notify rewards contract
+        // Update local platform total
         totalPlatformPayments += amount;
-        rewardsContract.updateRewardsOnPayment(job.jobGiver, job.selectedApplicant, amount);
-           
+        
         if (job.currentMilestone == job.finalMilestones.length) {
             job.status = JobStatus.Completed;
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
-
-        // Send to both chains via LayerZero
-        string memory message = string(abi.encodePacked(
-            "releasePayment:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            Strings.toString(amount)
-        ));
-        sendToTwoChains(message, _options1, _options2);
-       
+        
+        // Send cross-chain messages
+        uint32[] memory dstEids = new uint32[](2);
+        bytes[] memory options = new bytes[](2);
+        
+        dstEids[0] = rewardsChainEid;
+        dstEids[1] = nativeChainEid;
+        options[0] = _rewardsOptions;
+        options[1] = _nativeOptions;
+        
+        bytes memory rewardsPayload = abi.encode("updateRewardsOnPayment", job.jobGiver, job.selectedApplicant, amount);
+        bytes memory nativePayload = abi.encode("releasePayment", msg.sender, _jobId, amount);
+        
+        _sendToTwoChains(dstEids, rewardsPayload, nativePayload, options);
+        
         emit PaymentReleased(_jobId, msg.sender, job.selectedApplicant, amount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
+        emit CrossChainMessageSent("releasePayment", dstEids, abi.encode(_jobId, amount));
     }
     
     function lockNextMilestone(
         string memory _jobId,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         Job storage job = jobs[_jobId];
         require(bytes(job.id).length != 0, "Job does not exist");
@@ -491,25 +405,25 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.currentLockedAmount = nextAmount;
         job.totalEscrowed += nextAmount;
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "lockNextMilestone:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            Strings.toString(nextAmount)
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("lockNextMilestone", msg.sender, _jobId, nextAmount);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit MilestoneLocked(_jobId, job.currentMilestone, nextAmount);
         emit USDTEscrowed(_jobId, msg.sender, nextAmount);
+        emit CrossChainMessageSent("lockNextMilestone", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function releaseAndLockNext(
         string memory _jobId,
-        bytes calldata _options1,
-        bytes calldata _options2
+        bytes calldata _rewardsOptions,
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         Job storage job = jobs[_jobId];
         require(bytes(job.id).length != 0, "Job does not exist");
@@ -525,15 +439,8 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         job.totalPaid += releaseAmount;
         job.totalReleased += releaseAmount;
         
-        // Update local platform total and notify rewards contract
+        // Update local platform total
         totalPlatformPayments += releaseAmount;
-        if (address(rewardsContract) != address(0)) {
-            try rewardsContract.updateRewardsOnPayment(job.jobGiver, job.selectedApplicant, releaseAmount) {
-                // Success
-            } catch {
-                // Fail silently to not break payment release
-            }
-        }
         
         job.currentMilestone += 1;
         
@@ -550,28 +457,30 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Send to both chains via LayerZero
-        string memory message = string(abi.encodePacked(
-            "releasePaymentAndLockNext:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            Strings.toString(releaseAmount),
-            ":",
-            Strings.toString(nextAmount)
-        ));
-        sendToTwoChains(message, _options1, _options2);
+        // Send cross-chain messages
+        uint32[] memory dstEids = new uint32[](2);
+        bytes[] memory options = new bytes[](2);
+        
+        dstEids[0] = rewardsChainEid;
+        dstEids[1] = nativeChainEid;
+        options[0] = _rewardsOptions;
+        options[1] = _nativeOptions;
+        
+        bytes memory rewardsPayload = abi.encode("updateRewardsOnPayment", job.jobGiver, job.selectedApplicant, releaseAmount);
+        bytes memory nativePayload = abi.encode("releasePaymentAndLockNext", msg.sender, _jobId, releaseAmount, nextAmount);
+        
+        _sendToTwoChains(dstEids, rewardsPayload, nativePayload, options);
         
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, releaseAmount, nextAmount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
+        emit CrossChainMessageSent("releaseAndLockNext", dstEids, abi.encode(_jobId, releaseAmount, nextAmount));
     }
     
     function rate(
         string memory _jobId, 
         address _userToRate, 
         uint256 _rating,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         Job storage job = jobs[_jobId];
         require(bytes(job.id).length != 0, "Job does not exist");
@@ -586,20 +495,18 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         jobRatings[_jobId][_userToRate] = _rating;
         userRatings[_userToRate].push(_rating);
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "rate:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _jobId,
-            ":",
-            Strings.toHexString(uint160(_userToRate), 20),
-            ":",
-            Strings.toString(_rating)
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("rate", msg.sender, _jobId, _userToRate, _rating);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit UserRated(_jobId, msg.sender, _userToRate, _rating);
+        emit CrossChainMessageSent("rate", _getSingleChainArray(nativeChainEid), payload);
     }
     
     function getRating(address _user) public view returns (uint256) {
@@ -615,23 +522,109 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     
     function addPortfolio(
         string memory _portfolioHash,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(hasProfile[msg.sender], "Profile does not exist");
         require(bytes(_portfolioHash).length > 0, "Portfolio hash cannot be empty");
         
         profiles[msg.sender].portfolioHashes.push(_portfolioHash);
         
-        // Send to native chain only
-        string memory message = string(abi.encodePacked(
-            "addPortfolio:",
-            Strings.toHexString(uint160(msg.sender), 20),
-            ":",
-            _portfolioHash
-        ));
-        sendToNativeChain(message, _options);
+        // Send to native chain
+        bytes memory payload = abi.encode("addPortfolio", msg.sender, _portfolioHash);
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
         
         emit PortfolioAdded(msg.sender, _portfolioHash);
+        emit CrossChainMessageSent("addPortfolio", _getSingleChainArray(nativeChainEid), payload);
+    }
+    
+    // Internal helper functions
+    function _sendToTwoChains(
+        uint32[] memory _dstEids,
+        bytes memory _payload1,
+        bytes memory _payload2,
+        bytes[] memory _options
+    ) internal {
+        require(_dstEids.length == 2, "Must have exactly 2 destinations");
+        require(_options.length == 2, "Must have exactly 2 option sets");
+        
+        // Calculate total fees upfront
+        MessagingFee memory fee1 = _quote(_dstEids[0], _payload1, _options[0], false);
+        MessagingFee memory fee2 = _quote(_dstEids[1], _payload2, _options[1], false);
+        uint256 totalFee = fee1.nativeFee + fee2.nativeFee;
+        
+        require(msg.value >= totalFee, "Insufficient fee provided");
+        
+        // Send to first chain
+        _lzSend(
+            _dstEids[0],
+            _payload1,
+            _options[0],
+            fee1,
+            payable(msg.sender)
+        );
+        
+        // Send to second chain
+        _lzSend(
+            _dstEids[1],
+            _payload2,
+            _options[1],
+            fee2,
+            payable(msg.sender)
+        );
+    }
+    
+    function _getSingleChainArray(uint32 _chainEid) internal pure returns (uint32[] memory) {
+        uint32[] memory result = new uint32[](1);
+        result[0] = _chainEid;
+        return result;
+    }
+    
+    // Quote functions
+    function quoteCreateProfile(
+        string calldata _ipfsHash,
+        address _referrerAddress,
+        bytes calldata _rewardsOptions,
+        bytes calldata _nativeOptions
+    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 nativeFee) {
+        bytes memory rewardsPayload = abi.encode("createProfile", msg.sender, _referrerAddress);
+        bytes memory nativePayload = abi.encode("createProfile", msg.sender, _ipfsHash, _referrerAddress);
+        
+        MessagingFee memory msgFee1 = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
+        MessagingFee memory msgFee2 = _quote(nativeChainEid, nativePayload, _nativeOptions, false);
+        
+        rewardsFee = msgFee1.nativeFee;
+        nativeFee = msgFee2.nativeFee;
+        totalFee = rewardsFee + nativeFee;
+    }
+    
+    function quoteSingleChain(
+        string calldata _functionName,
+        bytes calldata _payload,
+        bytes calldata _options,
+        uint32 _destinationEid
+    ) external view returns (uint256 fee) {
+        MessagingFee memory msgFee = _quote(_destinationEid, _payload, _options, false);
+        return msgFee.nativeFee;
+    }
+    
+    function quoteDualChain(
+        bytes calldata _rewardsPayload,
+        bytes calldata _nativePayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _nativeOptions
+    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 nativeFee) {
+        MessagingFee memory msgFee1 = _quote(rewardsChainEid, _rewardsPayload, _rewardsOptions, false);
+        MessagingFee memory msgFee2 = _quote(nativeChainEid, _nativePayload, _nativeOptions, false);
+        
+        rewardsFee = msgFee1.nativeFee;
+        nativeFee = msgFee2.nativeFee;
+        totalFee = rewardsFee + nativeFee;
     }
     
     // View functions
@@ -662,16 +655,16 @@ contract LocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
         totalPlatformPayments = newTotal;
         emit PlatformTotalUpdated(newTotal);
     }
-
-    // Add this function to your Local contract
-    function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
-        peers[_eid] = _peer;
-        emit PeerSet(_eid, _peer);
-    }
-        
+    
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");
         payable(owner()).transfer(balance);
+    }
+    
+    function emergencyWithdrawUSDT() external onlyOwner {
+        uint256 balance = usdtToken.balanceOf(address(this));
+        require(balance > 0, "No USDT balance to withdraw");
+        usdtToken.safeTransfer(owner(), balance);
     }
 }
