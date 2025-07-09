@@ -55,7 +55,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
 
     // ==================== REWARDS CALCULATION STRUCTURES ====================
     
-    // Reward bands structure for job-based rewards (copied from main-rewards.sol)
     struct RewardBand {
         uint256 minAmount;      // Minimum cumulative amount for this band
         uint256 maxAmount;      // Maximum cumulative amount for this band
@@ -89,6 +88,11 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     mapping(address => string[]) public jobsByPoster;
     
     IRewardsTrackingContract public rewardsContract;
+
+    // ==================== LAYERZERO STATE ====================
+    
+    // Track which chains can send messages
+    mapping(uint32 => bool) public authorizedChains;
     
     // ==================== EVENTS ====================
     
@@ -104,15 +108,34 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     event JobStatusChanged(string indexed jobId, JobStatus newStatus);
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
     
-    // New rewards events
+    // Rewards events
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newCumulativeEarnings, uint256 newTotalTokens);
+    
+    // LayerZero events
+    event CrossChainMessageReceived(string indexed functionName, uint32 indexed srcEid);
+    event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized);
     
     constructor(address _endpoint, address _owner) OAppCore(_endpoint, _owner) Ownable(_owner) {
         _initializeRewardBands();
     }
 
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
+    // ==================== LAYERZERO FUNCTIONS ====================
     
+    /**
+     * @notice Set authorized chains that can send messages
+     * @param _chainEid Chain endpoint ID
+     * @param _authorized Whether the chain is authorized
+     */
+    function setAuthorizedChain(uint32 _chainEid, bool _authorized) external onlyOwner {
+        authorizedChains[_chainEid] = _authorized;
+        emit AuthorizedChainUpdated(_chainEid, _authorized);
+    }
+    
+    /**
+     * @notice Handle incoming LayerZero messages
+     * @param _origin Origin information containing source chain and sender
+     * @param _message Encoded function call data
+     */
     function _lzReceive(
         Origin calldata _origin,
         bytes32, // _guid (not used)
@@ -120,286 +143,104 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         address, // _executor (not used)
         bytes calldata // _extraData (not used)
     ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
+        // Verify the source chain is authorized
+        require(authorizedChains[_origin.srcEid], "Unauthorized source chain");
         
-        if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
-            (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
-            _handleCreateProfile(user, ipfsHash, referrer);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
-            (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
-            _handlePostJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
-            (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
-            _handleApplyToJob(applicant, jobId, applicationHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
-            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
-            _handleStartJob(jobGiver, jobId, applicationId, useApplicantMilestones);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
-            (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
-            _handleSubmitWork(applicant, jobId, submissionHash);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
-            (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
-            _handleReleasePayment(jobGiver, jobId, amount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
-            (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
-            _handleLockNextMilestone(caller, jobId, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
-            (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
-            _handleReleasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
-            (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
-            _handleRate(rater, jobId, userToRate, rating);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
-            (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
-            _handleAddPortfolio(user, portfolioHash);
-        }
-    }
-
-    function _handleCreateProfile(address user, string memory ipfsHash, address referrer) internal {
-        if (!hasProfile[user]) {
-            profiles[user] = Profile({
-                userAddress: user,
-                ipfsHash: ipfsHash,
-                referrerAddress: referrer,
-                portfolioHashes: new string[](0)
-            });
-            hasProfile[user] = true;
-            if (referrer != address(0) && referrer != user) {
-                userReferrers[user] = referrer;
-            }
-            emit ProfileCreated(user, ipfsHash, referrer);
-        }
-    }
-
-    function _handlePostJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) internal {
-        if (bytes(jobs[jobId].id).length == 0) {
-            jobCounter++;
-            allJobIds.push(jobId);
-            jobsByPoster[jobGiver].push(jobId);
-            
-            Job storage newJob = jobs[jobId];
-            newJob.id = jobId;
-            newJob.jobGiver = jobGiver;
-            newJob.jobDetailHash = jobDetailHash;
-            newJob.status = JobStatus.Open;
-            newJob.totalPaid = 0;
-            newJob.currentMilestone = 0;
-            newJob.selectedApplicant = address(0);
-            newJob.selectedApplicationId = 0;
-            
-            for (uint i = 0; i < descriptions.length; i++) {
-                newJob.milestonePayments.push(MilestonePayment({
-                    descriptionHash: descriptions[i],
-                    amount: amounts[i]
-                }));
-            }
-            
-            emit JobPosted(jobId, jobGiver, jobDetailHash);
-            emit JobStatusChanged(jobId, JobStatus.Open);
-        }
-    }
-
-    function _handleApplyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) internal {
-        bool alreadyApplied = false;
-        for (uint i = 0; i < jobs[jobId].applicants.length; i++) {
-            if (jobs[jobId].applicants[i] == applicant) {
-                alreadyApplied = true;
-                break;
-            }
-        }
+        // Decode function name and parameters
+        (string memory functionName, bytes memory params) = abi.decode(_message, (string, bytes));
         
-        if (!alreadyApplied) {
-            jobs[jobId].applicants.push(applicant);
-            jobApplicationCounter[jobId]++;
-            uint256 applicationId = jobApplicationCounter[jobId];
-            
-            Application storage newApplication = jobApplications[jobId][applicationId];
-            newApplication.id = applicationId;
-            newApplication.jobId = jobId;
-            newApplication.applicant = applicant;
-            newApplication.applicationHash = applicationHash;
-            
-            for (uint i = 0; i < descriptions.length; i++) {
-                newApplication.proposedMilestones.push(MilestonePayment({
-                    descriptionHash: descriptions[i],
-                    amount: amounts[i]
-                }));
-            }
-            
-            emit JobApplication(jobId, applicationId, applicant, applicationHash);
-        }
-    }
-
-    function _handleStartJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) internal {
-        Application storage application = jobApplications[jobId][applicationId];
-        Job storage job = jobs[jobId];
-        
-        job.selectedApplicant = application.applicant;
-        job.selectedApplicationId = applicationId;
-        job.status = JobStatus.InProgress;
-        job.currentMilestone = 1;
-        
-        if (useApplicantMilestones) {
-            for (uint i = 0; i < application.proposedMilestones.length; i++) {
-                job.finalMilestones.push(application.proposedMilestones[i]);
-            }
+        // Route to appropriate function
+        if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("createProfile"))) {
+            _handleCreateProfile(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("postJob"))) {
+            _handlePostJob(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("applyToJob"))) {
+            _handleApplyToJob(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("startJob"))) {
+            _handleStartJob(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("submitWork"))) {
+            _handleSubmitWork(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("releasePayment"))) {
+            _handleReleasePayment(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("lockNextMilestone"))) {
+            _handleLockNextMilestone(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("releasePaymentAndLockNext"))) {
+            _handleReleasePaymentAndLockNext(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("rate"))) {
+            _handleRate(params);
+        } else if (keccak256(abi.encodePacked(functionName)) == keccak256(abi.encodePacked("addPortfolio"))) {
+            _handleAddPortfolio(params);
         } else {
-            for (uint i = 0; i < job.milestonePayments.length; i++) {
-                job.finalMilestones.push(job.milestonePayments[i]);
-            }
+            revert("Unknown function");
         }
         
-        emit JobStarted(jobId, applicationId, application.applicant, useApplicantMilestones);
-        emit JobStatusChanged(jobId, JobStatus.InProgress);
+        emit CrossChainMessageReceived(functionName, _origin.srcEid);
     }
-
-    function _handleSubmitWork(address applicant, string memory jobId, string memory submissionHash) internal {
-        jobs[jobId].workSubmissions.push(submissionHash);
-        emit WorkSubmitted(jobId, applicant, submissionHash, jobs[jobId].currentMilestone);
+    
+    // ==================== LAYERZERO MESSAGE HANDLERS ====================
+    
+    function _handleCreateProfile(bytes memory params) internal {
+        (address user, string memory ipfsHash, address referrerAddress) = abi.decode(params, (address, string, address));
+        createProfile(user, ipfsHash, referrerAddress);
     }
-
-    function _handleReleasePayment(address jobGiver, string memory jobId, uint256 amount) internal {
-        jobs[jobId].totalPaid += amount;
-        totalPlatformPayments += amount;
-
-        // ==================== REWARDS CALCULATION ====================
-        address jobTaker = jobs[jobId].selectedApplicant;
-        
-        // Get referrers
-        address jobGiverReferrer = userReferrers[jobGiver];
-        address jobTakerReferrer = userReferrers[jobTaker];
-        
-        // Calculate reward distribution (same logic as main-rewards.sol)
-        uint256 jobGiverAmount = amount;
-        uint256 jobGiverReferrerAmount = 0;
-        uint256 jobTakerReferrerAmount = 0;
-        
-        // Deduct referral bonuses from job giver's amount
-        if (jobGiverReferrer != address(0) && jobGiverReferrer != jobGiver) {
-            jobGiverReferrerAmount = amount / 10; // 10% referral bonus
-            jobGiverAmount -= jobGiverReferrerAmount;
-        }
-        
-        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
-            jobTakerReferrerAmount = amount / 10; // 10% referral bonus
-            jobGiverAmount -= jobTakerReferrerAmount;
-        }
-        
-        // Accumulate earnings for job giver (after deducting referral amounts)
-        if (jobGiverAmount > 0) {
-            _accumulateJobTokens(jobGiver, jobGiverAmount);
-        }
-        
-        // Accumulate earnings for referrers
-        if (jobGiverReferrerAmount > 0) {
-            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
-        }
-        
-        if (jobTakerReferrerAmount > 0) {
-            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
-        }
-        // ==================== END REWARDS CALCULATION ====================
-        
-        if (jobs[jobId].currentMilestone == jobs[jobId].finalMilestones.length) {
-            jobs[jobId].status = JobStatus.Completed;
-            emit JobStatusChanged(jobId, JobStatus.Completed);
-        }
-        
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(jobId, amount, totalPlatformPayments);
-        }
-        
-        emit PaymentReleased(jobId, jobGiver, jobs[jobId].selectedApplicant, amount, jobs[jobId].currentMilestone);
+    
+    function _handlePostJob(bytes memory params) internal {
+        (string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = 
+            abi.decode(params, (string, address, string, string[], uint256[]));
+        postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
     }
-
-    function _handleLockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) internal {
-        if (jobs[jobId].currentMilestone < jobs[jobId].finalMilestones.length) {
-            jobs[jobId].currentMilestone += 1;
-            emit MilestoneLocked(jobId, jobs[jobId].currentMilestone, lockedAmount);
-        }
+    
+    function _handleApplyToJob(bytes memory params) internal {
+        (address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = 
+            abi.decode(params, (address, string, string, string[], uint256[]));
+        applyToJob(applicant, jobId, applicationHash, descriptions, amounts);
     }
-
-    function _handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) internal {
-        jobs[jobId].totalPaid += releasedAmount;
-        totalPlatformPayments += releasedAmount;
-
-        // ==================== REWARDS CALCULATION ====================
-        address jobTaker = jobs[jobId].selectedApplicant;
-        
-        // Get referrers
-        address jobGiverReferrer = userReferrers[jobGiver];
-        address jobTakerReferrer = userReferrers[jobTaker];
-        
-        // Calculate reward distribution (same logic as main-rewards.sol)
-        uint256 jobGiverAmount = releasedAmount;
-        uint256 jobGiverReferrerAmount = 0;
-        uint256 jobTakerReferrerAmount = 0;
-        
-        // Deduct referral bonuses from job giver's amount
-        if (jobGiverReferrer != address(0) && jobGiverReferrer != jobGiver) {
-            jobGiverReferrerAmount = releasedAmount / 10; // 10% referral bonus
-            jobGiverAmount -= jobGiverReferrerAmount;
-        }
-        
-        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
-            jobTakerReferrerAmount = releasedAmount / 10; // 10% referral bonus
-            jobGiverAmount -= jobTakerReferrerAmount;
-        }
-        
-        // Accumulate earnings for job giver (after deducting referral amounts)
-        if (jobGiverAmount > 0) {
-            _accumulateJobTokens(jobGiver, jobGiverAmount);
-        }
-        
-        // Accumulate earnings for referrers
-        if (jobGiverReferrerAmount > 0) {
-            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
-        }
-        
-        if (jobTakerReferrerAmount > 0) {
-            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
-        }
-        // ==================== END REWARDS CALCULATION ====================
-        
-        jobs[jobId].currentMilestone += 1;
-        
-        if (jobs[jobId].currentMilestone > jobs[jobId].finalMilestones.length) {
-            jobs[jobId].status = JobStatus.Completed;
-            emit JobStatusChanged(jobId, JobStatus.Completed);
-        }
-        
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(jobId, releasedAmount, totalPlatformPayments);
-        }
-        
-        emit PaymentReleasedAndNextMilestoneLocked(jobId, releasedAmount, lockedAmount, jobs[jobId].currentMilestone);
+    
+    function _handleStartJob(bytes memory params) internal {
+        (address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = 
+            abi.decode(params, (address, string, uint256, bool));
+        startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
     }
-
-    function _handleRate(address rater, string memory jobId, address userToRate, uint256 rating) internal {
-        bool isAuthorized = false;
-        
-        if (rater == jobs[jobId].jobGiver && userToRate == jobs[jobId].selectedApplicant) {
-            isAuthorized = true;
-        } else if (rater == jobs[jobId].selectedApplicant && userToRate == jobs[jobId].jobGiver) {
-            isAuthorized = true;
-        }
-        
-        if (isAuthorized) {
-            jobRatings[jobId][userToRate] = rating;
-            userRatings[userToRate].push(rating);
-            emit UserRated(jobId, rater, userToRate, rating);
-        }
+    
+    function _handleSubmitWork(bytes memory params) internal {
+        (address applicant, string memory jobId, string memory submissionHash) = 
+            abi.decode(params, (address, string, string));
+        submitWork(applicant, jobId, submissionHash);
     }
-
-    function _handleAddPortfolio(address user, string memory portfolioHash) internal {
-        profiles[user].portfolioHashes.push(portfolioHash);
-        emit PortfolioAdded(user, portfolioHash);
+    
+    function _handleReleasePayment(bytes memory params) internal {
+        (address jobGiver, string memory jobId, uint256 amount) = 
+            abi.decode(params, (address, string, uint256));
+        releasePayment(jobGiver, jobId, amount);
+    }
+    
+    function _handleLockNextMilestone(bytes memory params) internal {
+        (address caller, string memory jobId, uint256 lockedAmount) = 
+            abi.decode(params, (address, string, uint256));
+        lockNextMilestone(caller, jobId, lockedAmount);
+    }
+    
+    function _handleReleasePaymentAndLockNext(bytes memory params) internal {
+        (address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = 
+            abi.decode(params, (address, string, uint256, uint256));
+        releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
+    }
+    
+    function _handleRate(bytes memory params) internal {
+        (address rater, string memory jobId, address userToRate, uint256 rating) = 
+            abi.decode(params, (address, string, address, uint256));
+        rate(rater, jobId, userToRate, rating);
+    }
+    
+    function _handleAddPortfolio(bytes memory params) internal {
+        (address user, string memory portfolioHash) = 
+            abi.decode(params, (address, string));
+        addPortfolio(user, portfolioHash);
     }
 
     // ==================== REWARDS INITIALIZATION ====================
     
     function _initializeRewardBands() private {
-        // Job-based reward bands (same as main-rewards.sol)
         rewardBands.push(RewardBand(0, 500 * 1e6, 100000 * 1e18));
         rewardBands.push(RewardBand(500 * 1e6, 1000 * 1e6, 50000 * 1e18));
         rewardBands.push(RewardBand(1000 * 1e6, 2000 * 1e6, 25000 * 1e18));
@@ -435,18 +276,16 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         for (uint256 i = 0; i < rewardBands.length && currentAmount < toAmount; i++) {
             RewardBand memory band = rewardBands[i];
             
-            // Skip bands that are entirely below our starting point
             if (band.maxAmount <= currentAmount) {
                 continue;
             }
             
-            // Calculate the overlap with this band
             uint256 bandStart = currentAmount > band.minAmount ? currentAmount : band.minAmount;
             uint256 bandEnd = toAmount < band.maxAmount ? toAmount : band.maxAmount;
             
             if (bandStart < bandEnd) {
                 uint256 amountInBand = bandEnd - bandStart;
-                uint256 tokensInBand = (amountInBand * band.owPerDollar) / 1e6; // Convert USDT (6 decimals) to tokens
+                uint256 tokensInBand = (amountInBand * band.owPerDollar) / 1e6;
                 totalTokens += tokensInBand;
                 currentAmount = bandEnd;
             }
@@ -459,10 +298,8 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         uint256 currentCumulative = userCumulativeEarnings[user];
         uint256 newCumulative = currentCumulative + amountUSDT;
         
-        // Calculate tokens based on progressive bands
         uint256 tokensToAward = calculateTokensForRange(currentCumulative, newCumulative);
         
-        // Update user's cumulative earnings and total tokens
         userCumulativeEarnings[user] = newCumulative;
         userTotalOWTokens[user] += tokensToAward;
         
@@ -494,7 +331,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         rewardsContract = IRewardsTrackingContract(_rewardsContract);
     }
     
-    function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
+    function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) public {
         require(!hasProfile[_user], "Profile already exists");
         
         profiles[_user] = Profile({
@@ -506,7 +343,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         
         hasProfile[_user] = true;
 
-        // Store referrer for rewards calculation
         if (_referrerAddress != address(0) && _referrerAddress != _user) {
             userReferrers[_user] = _referrerAddress;
         }
@@ -518,16 +354,10 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         return profiles[_user];
     }
     
-    function postJob(string memory _jobId, address _jobGiver, string memory _jobDetailHash, string[] memory _descriptions, uint256[] memory _amounts) external {
+    function postJob(string memory _jobId, address _jobGiver, string memory _jobDetailHash, string[] memory _descriptions, uint256[] memory _amounts) public {
         require(bytes(jobs[_jobId].id).length == 0, "Job ID already exists");
         require(_descriptions.length == _amounts.length, "Array length mismatch");
         
-        uint256 calculatedTotal = 0;
-        for (uint i = 0; i < _amounts.length; i++) {
-            calculatedTotal += _amounts[i];
-        }
-        
-        // Increment job counter and track job
         jobCounter++;
         allJobIds.push(_jobId);
         jobsByPoster[_jobGiver].push(_jobId);
@@ -557,7 +387,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         return jobs[_jobId];
     }
     
-    function applyToJob(address _applicant, string memory _jobId, string memory _applicationHash, string[] memory _descriptions, uint256[] memory _amounts) external {
+    function applyToJob(address _applicant, string memory _jobId, string memory _applicationHash, string[] memory _descriptions, uint256[] memory _amounts) public {
         require(_descriptions.length == _amounts.length, "Array length mismatch");
         
         for (uint i = 0; i < jobs[_jobId].applicants.length; i++) {
@@ -585,7 +415,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit JobApplication(_jobId, applicationId, _applicant, _applicationHash);
     }
     
-    function startJob(address /* _jobGiver */, string memory _jobId, uint256 _applicationId, bool _useApplicantMilestones) external {
+    function startJob(address /* _jobGiver */, string memory _jobId, uint256 _applicationId, bool _useApplicantMilestones) public {
         Application storage application = jobApplications[_jobId][_applicationId];
         Job storage job = jobs[_jobId];
         
@@ -613,45 +443,40 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         return jobApplications[_jobId][_applicationId];
     }
     
-    function submitWork(address _applicant, string memory _jobId, string memory _submissionHash) external {
+    function submitWork(address _applicant, string memory _jobId, string memory _submissionHash) public {
         jobs[_jobId].workSubmissions.push(_submissionHash);
         
         emit WorkSubmitted(_jobId, _applicant, _submissionHash, jobs[_jobId].currentMilestone);
     }
     
-    function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external {
+    function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) public {
         jobs[_jobId].totalPaid += _amount;
         totalPlatformPayments += _amount;
 
         // ==================== REWARDS CALCULATION ====================
         address jobTaker = jobs[_jobId].selectedApplicant;
         
-        // Get referrers
         address jobGiverReferrer = userReferrers[_jobGiver];
         address jobTakerReferrer = userReferrers[jobTaker];
         
-        // Calculate reward distribution (same logic as main-rewards.sol)
         uint256 jobGiverAmount = _amount;
         uint256 jobGiverReferrerAmount = 0;
         uint256 jobTakerReferrerAmount = 0;
         
-        // Deduct referral bonuses from job giver's amount
         if (jobGiverReferrer != address(0) && jobGiverReferrer != _jobGiver) {
-            jobGiverReferrerAmount = _amount / 10; // 10% referral bonus
+            jobGiverReferrerAmount = _amount / 10;
             jobGiverAmount -= jobGiverReferrerAmount;
         }
         
         if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
-            jobTakerReferrerAmount = _amount / 10; // 10% referral bonus
+            jobTakerReferrerAmount = _amount / 10;
             jobGiverAmount -= jobTakerReferrerAmount;
         }
         
-        // Accumulate earnings for job giver (after deducting referral amounts)
         if (jobGiverAmount > 0) {
             _accumulateJobTokens(_jobGiver, jobGiverAmount);
         }
         
-        // Accumulate earnings for referrers
         if (jobGiverReferrerAmount > 0) {
             _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
         }
@@ -673,7 +498,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit PaymentReleased(_jobId, _jobGiver, jobs[_jobId].selectedApplicant, _amount, jobs[_jobId].currentMilestone);
     }
     
-    function lockNextMilestone(address /* _caller */, string memory _jobId, uint256 _lockedAmount) external {
+    function lockNextMilestone(address /* _caller */, string memory _jobId, uint256 _lockedAmount) public {
         require(jobs[_jobId].currentMilestone < jobs[_jobId].finalMilestones.length, "All milestones already completed");
         
         jobs[_jobId].currentMilestone += 1;
@@ -681,39 +506,34 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit MilestoneLocked(_jobId, jobs[_jobId].currentMilestone, _lockedAmount);
     }
     
-    function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external {
+    function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) public {
         jobs[_jobId].totalPaid += _releasedAmount;
         totalPlatformPayments += _releasedAmount;
 
         // ==================== REWARDS CALCULATION ====================
         address jobTaker = jobs[_jobId].selectedApplicant;
         
-        // Get referrers
         address jobGiverReferrer = userReferrers[_jobGiver];
         address jobTakerReferrer = userReferrers[jobTaker];
         
-        // Calculate reward distribution (same logic as main-rewards.sol)
         uint256 jobGiverAmount = _releasedAmount;
         uint256 jobGiverReferrerAmount = 0;
         uint256 jobTakerReferrerAmount = 0;
         
-        // Deduct referral bonuses from job giver's amount
         if (jobGiverReferrer != address(0) && jobGiverReferrer != _jobGiver) {
-            jobGiverReferrerAmount = _releasedAmount / 10; // 10% referral bonus
+            jobGiverReferrerAmount = _releasedAmount / 10;
             jobGiverAmount -= jobGiverReferrerAmount;
         }
         
         if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
-            jobTakerReferrerAmount = _releasedAmount / 10; // 10% referral bonus
+            jobTakerReferrerAmount = _releasedAmount / 10;
             jobGiverAmount -= jobTakerReferrerAmount;
         }
         
-        // Accumulate earnings for job giver (after deducting referral amounts)
         if (jobGiverAmount > 0) {
             _accumulateJobTokens(_jobGiver, jobGiverAmount);
         }
         
-        // Accumulate earnings for referrers
         if (jobGiverReferrerAmount > 0) {
             _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
         }
@@ -737,7 +557,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, jobs[_jobId].currentMilestone);
     }
     
-    function rate(address _rater, string memory _jobId, address _userToRate, uint256 _rating) external {
+    function rate(address _rater, string memory _jobId, address _userToRate, uint256 _rating) public {
         bool isAuthorized = false;
         
         if (_rater == jobs[_jobId].jobGiver && _userToRate == jobs[_jobId].selectedApplicant) {
@@ -768,7 +588,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         return totalRating / ratings.length;
     }
     
-    function addPortfolio(address _user, string memory _portfolioHash) external {
+    function addPortfolio(address _user, string memory _portfolioHash) public {
         profiles[_user].portfolioHashes.push(_portfolioHash);
         
         emit PortfolioAdded(_user, _portfolioHash);
@@ -816,5 +636,11 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     
     function getUserReferrer(address user) external view returns (address) {
         return userReferrers[user];
+    }
+
+    // ==================== LAYERZERO VIEW FUNCTIONS ====================
+    
+    function isChainAuthorized(uint32 chainEid) external view returns (bool) {
+        return authorizedChains[chainEid];
     }
 }
