@@ -2,108 +2,164 @@
 pragma solidity ^0.8.22;
 
 import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
+import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
 import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract MinimalNativeOpenWorkJobContract is OAppReceiver {
+// Interface to get staker info from Native DAO
+interface INativeDAO {
+    function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive);
+}
+
+// Interface to get earned tokens and job details from Native OpenWork Job Contract
+interface INativeOpenWorkJobContract {
+    function getUserEarnedTokens(address user) external view returns (uint256);
+    function getJob(string memory _jobId) external view returns (
+        string memory id,
+        address jobGiver,
+        address[] memory applicants,
+        string memory jobDetailHash,
+        uint8 status, // JobStatus enum as uint8
+        string[] memory workSubmissions,
+        uint256 totalPaid,
+        uint256 currentMilestone,
+        address selectedApplicant,
+        uint256 selectedApplicationId
+    );
+    function jobExists(string memory _jobId) external view returns (bool);
+}
+
+// Interface to notify governance actions in Rewards Contract
+interface IRewardsContract {
+    function notifyGovernanceAction(address account) external;
+}
+
+// Interface to communicate with AthenaClient Contract
+interface IAthenaClient {
+    function recordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external;
+    function finalizeDispute(string memory disputeId, bool winningSide, uint256 totalVotingPowerFor, uint256 totalVotingPowerAgainst) external;
+}
+
+contract CrossChainNativeAthena is OAppReceiver, OAppSender {
+    address public daoContract;
     
-    enum JobStatus {
-        Open,
-        InProgress,
-        Completed,
-        Cancelled
+    // Native OpenWork Job Contract for earned tokens check
+    INativeOpenWorkJobContract public nowjContract;
+    
+    // Rewards Contract for governance action tracking (local reference for fallback)
+    IRewardsContract public rewardsContract;
+    
+    // AthenaClient Contract for fee distribution
+    IAthenaClient public athenaClient;
+    
+    // Cross-chain settings
+    uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
+    
+    // Add this enum to define voting types
+    enum VotingType {
+        Dispute,
+        SkillVerification,
+        AskAthena
     }
     
-    struct Profile {
-        address userAddress;
-        string ipfsHash;
-        address referrerAddress;
-        string[] portfolioHashes;
+    struct Oracle {
+        string name;
+        address[] members;
+        string shortDescription;
+        string hashOfDetails;
+        address[] skillVerifiedAddresses;
     }
     
-    struct MilestonePayment {
-        string descriptionHash;
-        uint256 amount;
-    }
-    
-    struct Application {
-        uint256 id;
-        string jobId;
+    struct SkillVerificationApplication {
         address applicant;
         string applicationHash;
-        MilestonePayment[] proposedMilestones;
+        uint256 feeAmount;
+        string targetOracleName;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        bool isVotingActive;
+        uint256 timeStamp;
     }
     
-    struct Job {
-        string id;
-        address jobGiver;
-        address[] applicants;
-        string jobDetailHash;
-        JobStatus status;
-        string[] workSubmissions;
-        MilestonePayment[] milestonePayments;
-        MilestonePayment[] finalMilestones;
-        uint256 totalPaid;
-        uint256 currentMilestone;
-        address selectedApplicant;
-        uint256 selectedApplicationId;
+    struct AskAthenaApplication {
+        address applicant;
+        string description;
+        string hash;
+        string targetOracle;
+        string fees;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        bool isVotingActive;
+        uint256 timeStamp;
     }
     
-    // State variables
-    mapping(address => Profile) public profiles;
-    mapping(address => bool) public hasProfile;
-    mapping(string => Job) public jobs;
-    mapping(string => mapping(uint256 => Application)) public jobApplications;
-    mapping(string => uint256) public jobApplicationCounter;
-    mapping(string => mapping(address => uint256)) public jobRatings;
-    mapping(address => uint256[]) public userRatings;
-    
-    // Job tracking variables
-    uint256 public jobCounter;
-    string[] public allJobIds;
-    mapping(address => string[]) public jobsByPoster;
-    
-    // User referrer mapping for rewards calculation
-    mapping(address => address) public userReferrers;
-    
-    // Track which chains can send messages
-    mapping(uint32 => bool) public authorizedChains;
+    struct Dispute {
+        string jobId;
+        uint256 disputedAmount;
+        string hash;
+        address disputeRaiserAddress;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        bool result;
+        bool isVotingActive;
+        bool isFinalized;
+        uint256 timeStamp;
+        uint256 fees;
+    }
+
+    mapping(string => mapping(address => bool)) public hasVotedOnDispute;
+    mapping(uint256 => mapping(address => bool)) public hasVotedOnSkillApplication;
+    mapping(uint256 => mapping(address => bool)) public hasVotedOnAskAthena;
+    mapping(string => Oracle) public oracles;
+    mapping(string => mapping(address => uint256)) public memberStakeAmount;
+    mapping(string => mapping(address => uint256)) public skillVerificationDates;
+    mapping(uint256 => SkillVerificationApplication) public skillApplications;
+    mapping(uint256 => AskAthenaApplication) public askAthenaApplications;
+    mapping(string => Dispute) public disputes;
+    uint256 public applicationCounter;
+    uint256 public askAthenaCounter;
+    uint256 public minOracleMembers = 3;
+    uint256 public votingPeriodMinutes = 4;
+    uint256 public minStakeRequired = 100;
     
     // Events
-// Events
-    event ProfileCreated(address indexed user, string ipfsHash, address referrer, uint32 sourceChain);
-    event JobPosted(string indexed jobId, address indexed jobGiver, string jobDetailHash, uint32 sourceChain);
-    event JobApplication(string indexed jobId, uint256 indexed applicationId, address indexed applicant, string applicationHash, uint32 sourceChain);
-    event JobStarted(string indexed jobId, uint256 indexed applicationId, address indexed selectedApplicant, bool useApplicantMilestones, uint32 sourceChain);
-    event WorkSubmitted(string indexed jobId, address indexed applicant, string submissionHash, uint256 milestone, uint32 sourceChain);
-    event PaymentReleased(string indexed jobId, address indexed jobGiver, address indexed applicant, uint256 amount, uint256 milestone, uint32 sourceChain);
-    event MilestoneLocked(string indexed jobId, uint256 newMilestone, uint256 lockedAmount, uint32 sourceChain);
-    event UserRated(string indexed jobId, address indexed rater, address indexed rated, uint256 rating, uint32 sourceChain);
-    event PortfolioAdded(address indexed user, string portfolioHash, uint32 sourceChain);
-    event JobStatusChanged(string indexed jobId, JobStatus newStatus);
-    event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone, uint32 sourceChain);
-
-    event CrossChainMessageReceived(string indexed functionName, uint32 sourceChain, bytes data);
-    event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized);    
-
-    constructor(address _endpoint, address _owner) OAppCore(_endpoint, _owner) Ownable(_owner) {}
+    event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
+    event RewardsContractUpdated(address indexed oldContract, address indexed newContract);
+    event AthenaClientUpdated(address indexed oldContract, address indexed newContract);
+    event EarnedTokensUsedForVoting(address indexed user, uint256 earnedTokens, string votingType);
+    event GovernanceActionNotified(address indexed user, string action);
+    event CrossContractCallFailed(address indexed account, string reason);
+    event DisputeFinalized(string indexed disputeId, bool winningSide, uint256 totalVotesFor, uint256 totalVotesAgainst);
+    event DisputeRaised(string indexed jobId, address indexed disputeRaiser, uint256 fees);
+    event SkillVerificationSubmitted(address indexed applicant, string targetOracleName, uint256 feeAmount);
+    event AskAthenaSubmitted(address indexed applicant, string targetOracle, string fees);
+    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
+    event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
+    event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
     
-    /**
-     * @notice Set authorized chains that can send messages
-     * @param _chainEid Chain endpoint ID
-     * @param _authorized Whether the chain is authorized
-     */
-    function setAuthorizedChain(uint32 _chainEid, bool _authorized) external onlyOwner {
-        authorizedChains[_chainEid] = _authorized;
-        emit AuthorizedChainUpdated(_chainEid, _authorized);
+    modifier onlyDAO() {
+        require(msg.sender == daoContract, "Only DAO can call this function");
+        _;
     }
     
-    /**
-     * @notice Handle incoming LayerZero messages
-     * @param _origin Origin information containing source chain and sender
-     * @param _message Encoded function call data
-     */
+    constructor(address _endpoint, address _owner, address _daoContract) OAppCore(_endpoint, _owner) Ownable(_owner) {
+        daoContract = _daoContract;
+    }
+
+    // Override the conflicting oAppVersion function
+    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
+        return (1, 1);
+    }
+
+    // Override to change fee check from equivalency to < since batch fees are cumulative
+    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
+        if (msg.value < _nativeFee) revert("Insufficient native fee");
+        return _nativeFee;
+    }
+
+    // ==================== LAYERZERO MESSAGE HANDLING ====================
+    
     function _lzReceive(
         Origin calldata _origin,
         bytes32, // _guid (not used)
@@ -111,392 +167,525 @@ contract MinimalNativeOpenWorkJobContract is OAppReceiver {
         address, // _executor (not used)
         bytes calldata // _extraData (not used)
     ) internal override {
-        // Verify the source chain is authorized
-        require(authorizedChains[_origin.srcEid], "Unauthorized source chain");
-        
-        // Decode the function name and parameters
         (string memory functionName) = abi.decode(_message, (string));
         
-        // Route to appropriate handler based on function name
-        if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
-            _handleCreateProfile(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
-            _handlePostJob(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
-            _handleApplyToJob(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
-            _handleStartJob(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
-            _handleSubmitWork(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
-            _handleReleasePayment(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
-            _handleLockNextMilestone(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
-            _handleReleasePaymentAndLockNext(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
-            _handleRate(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
-            _handleAddPortfolio(_message, _origin.srcEid);
-        } else {
-            revert("Unknown function");
+        if (keccak256(bytes(functionName)) == keccak256(bytes("raiseDispute"))) {
+            (, string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee) = abi.decode(_message, (string, string, string, string, uint256));
+            _handleRaiseDispute(jobId, disputeHash, oracleName, fee);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitSkillVerification"))) {
+            (, address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) = abi.decode(_message, (string, address, string, uint256, string));
+            _handleSubmitSkillVerification(applicant, applicationHash, feeAmount, targetOracleName);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("askAthena"))) {
+            (, address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) = abi.decode(_message, (string, address, string, string, string, string));
+            _handleAskAthena(applicant, description, hash, targetOracle, fees);
         }
         
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
     }
+
+    // ==================== MESSAGE HANDLERS ====================
     
-    /**
-     * @notice Handle profile creation messages
-     */
-    function _handleCreateProfile(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
-        _createProfile(user, ipfsHash, referrer, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle job posting messages
-     */
-    function _handlePostJob(bytes calldata _message, uint32 _sourceChain) internal {
-        (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = 
-            abi.decode(_message, (string, string, address, string, string[], uint256[]));
-        _postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle job application messages
-     */
-    function _handleApplyToJob(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = 
-            abi.decode(_message, (string, address, string, string, string[], uint256[]));
-        _applyToJob(applicant, jobId, applicationHash, descriptions, amounts, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle start job messages
-     */
-    function _handleStartJob(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = 
-            abi.decode(_message, (string, address, string, uint256, bool));
-        _startJob(jobGiver, jobId, applicationId, useApplicantMilestones, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle work submission messages
-     */
-    function _handleSubmitWork(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address applicant, string memory jobId, string memory submissionHash) = 
-            abi.decode(_message, (string, address, string, string));
-        _submitWork(applicant, jobId, submissionHash, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle payment release messages
-     */
-    function _handleReleasePayment(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address jobGiver, string memory jobId, uint256 amount) = 
-            abi.decode(_message, (string, address, string, uint256));
-        _releasePayment(jobGiver, jobId, amount, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle milestone locking messages
-     */
-    function _handleLockNextMilestone(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address caller, string memory jobId, uint256 lockedAmount) = 
-            abi.decode(_message, (string, address, string, uint256));
-        _lockNextMilestone(caller, jobId, lockedAmount, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle release payment and lock next messages
-     */
-    function _handleReleasePaymentAndLockNext(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = 
-            abi.decode(_message, (string, address, string, uint256, uint256));
-        _releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle rating messages
-     */
-    function _handleRate(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address rater, string memory jobId, address userToRate, uint256 rating) = 
-            abi.decode(_message, (string, address, string, address, uint256));
-        _rate(rater, jobId, userToRate, rating, _sourceChain);
-    }
-    
-    /**
-     * @notice Handle portfolio addition messages
-     */
-    function _handleAddPortfolio(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address user, string memory portfolioHash) = 
-            abi.decode(_message, (string, address, string));
-        _addPortfolio(user, portfolioHash, _sourceChain);
-    }
-    
-    // Internal implementation functions
-    function _createProfile(address user, string memory ipfsHash, address referrer, uint32 sourceChain) internal {
-        require(user != address(0), "Invalid user address");
-        require(!hasProfile[user], "Profile already exists");
+    function _handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee) internal {
+        // Check if oracle is active (has minimum required members)
+        require(oracles[oracleName].members.length >= minOracleMembers, "Oracle not active");
         
-        profiles[user] = Profile({
-            userAddress: user,
-            ipfsHash: ipfsHash,
-            referrerAddress: referrer,
-            portfolioHashes: new string[](0)
+        // Check if dispute already exists for this job
+        require(!disputes[jobId].isVotingActive && disputes[jobId].timeStamp == 0, "Dispute already exists for this job");
+        
+        // Create new dispute using string jobId as key
+        disputes[jobId] = Dispute({
+            jobId: jobId,
+            disputedAmount: fee,
+            hash: disputeHash,
+            disputeRaiserAddress: msg.sender, // This will be the AthenaClient contract
+            votesFor: 0,
+            votesAgainst: 0,
+            result: false,
+            isVotingActive: true,
+            isFinalized: false,
+            timeStamp: block.timestamp,
+            fees: fee
         });
         
-        hasProfile[user] = true;
-        
-        if (referrer != address(0) && referrer != user) {
-            userReferrers[user] = referrer;
-        }
-        
-        emit ProfileCreated(user, ipfsHash, referrer, sourceChain);
+        emit DisputeRaised(jobId, msg.sender, fee);
     }
     
-    function _postJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts, uint32 sourceChain) internal {
-        require(bytes(jobs[jobId].id).length == 0, "Job ID already exists");
-        require(descriptions.length == amounts.length, "Array length mismatch");
+    function _handleSubmitSkillVerification(address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) internal {
+        skillApplications[applicationCounter] = SkillVerificationApplication({
+            applicant: applicant,
+            applicationHash: applicationHash,
+            feeAmount: feeAmount,
+            targetOracleName: targetOracleName,
+            votesFor: 0,
+            votesAgainst: 0,
+            isVotingActive: true,
+            timeStamp: block.timestamp
+        });
+        applicationCounter++;
         
-        // Increment job counter and track job
-        jobCounter++;
-        allJobIds.push(jobId);
-        jobsByPoster[jobGiver].push(jobId);
-        
-        Job storage newJob = jobs[jobId];
-        newJob.id = jobId;
-        newJob.jobGiver = jobGiver;
-        newJob.jobDetailHash = jobDetailHash;
-        newJob.status = JobStatus.Open;
-        newJob.totalPaid = 0;
-        newJob.currentMilestone = 0;
-        newJob.selectedApplicant = address(0);
-        newJob.selectedApplicationId = 0;
-        
-        for (uint i = 0; i < descriptions.length; i++) {
-            newJob.milestonePayments.push(MilestonePayment({
-                descriptionHash: descriptions[i],
-                amount: amounts[i]
-            }));
-        }
-        
-        emit JobPosted(jobId, jobGiver, jobDetailHash, sourceChain);
-        emit JobStatusChanged(jobId, JobStatus.Open);
+        emit SkillVerificationSubmitted(applicant, targetOracleName, feeAmount);
     }
     
-    function _applyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts, uint32 sourceChain) internal {
-        require(descriptions.length == amounts.length, "Array length mismatch");
+    function _handleAskAthena(address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) internal {
+        askAthenaApplications[askAthenaCounter] = AskAthenaApplication({
+            applicant: applicant,
+            description: description,
+            hash: hash,
+            targetOracle: targetOracle,
+            fees: fees,
+            votesFor: 0,
+            votesAgainst: 0,
+            isVotingActive: true,
+            timeStamp: block.timestamp
+        });
+        askAthenaCounter++;
         
-        for (uint i = 0; i < jobs[jobId].applicants.length; i++) {
-            require(jobs[jobId].applicants[i] != applicant, "Already applied to this job");
-        }
-        
-        jobs[jobId].applicants.push(applicant);
-        
-        jobApplicationCounter[jobId]++;
-        uint256 applicationId = jobApplicationCounter[jobId];
-        
-        Application storage newApplication = jobApplications[jobId][applicationId];
-        newApplication.id = applicationId;
-        newApplication.jobId = jobId;
-        newApplication.applicant = applicant;
-        newApplication.applicationHash = applicationHash;
-        
-        for (uint i = 0; i < descriptions.length; i++) {
-            newApplication.proposedMilestones.push(MilestonePayment({
-                descriptionHash: descriptions[i],
-                amount: amounts[i]
-            }));
-        }
-        
-        emit JobApplication(jobId, applicationId, applicant, applicationHash, sourceChain);
+        emit AskAthenaSubmitted(applicant, targetOracle, fees);
     }
     
-    function _startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones, uint32 sourceChain) internal {
-        Application storage application = jobApplications[jobId][applicationId];
-        Job storage job = jobs[jobId];
+    // ==================== CONTRACT SETUP FUNCTIONS ====================
+    
+    function setNOWJContract(address _nowjContract) external onlyOwner {
+        address oldContract = address(nowjContract);
+        nowjContract = INativeOpenWorkJobContract(_nowjContract);
+        emit NOWJContractUpdated(oldContract, _nowjContract);
+    }
+    
+    function setRewardsContract(address _rewardsContract) external onlyOwner {
+        address oldContract = address(rewardsContract);
+        rewardsContract = IRewardsContract(_rewardsContract);
+        emit RewardsContractUpdated(oldContract, _rewardsContract);
+    }
+    
+    function setAthenaClient(address _athenaClient) external onlyOwner {
+        address oldContract = address(athenaClient);
+        athenaClient = IAthenaClient(_athenaClient);
+        emit AthenaClientUpdated(oldContract, _athenaClient);
+    }
+    
+    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
+        uint32 oldEid = rewardsChainEid;
+        rewardsChainEid = _rewardsChainEid;
+        emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
+    }
+    
+    // ==================== CROSS-CHAIN MESSAGING ====================
+    
+    function _sendGovernanceNotificationCrossChain(
+        address account, 
+        string memory actionType,
+        bytes memory _rewardsOptions
+    ) internal {
+        if (rewardsChainEid == 0) {
+            // Fallback to local rewards contract if no cross-chain setup
+            _notifyRewardsContractLocal(account, actionType);
+            return;
+        }
         
-        job.selectedApplicant = application.applicant;
-        job.selectedApplicationId = applicationId;
-        job.status = JobStatus.InProgress;
-        job.currentMilestone = 1;
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
         
-        if (useApplicantMilestones) {
-            for (uint i = 0; i < application.proposedMilestones.length; i++) {
-                job.finalMilestones.push(application.proposedMilestones[i]);
+        MessagingFee memory fee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
+        
+        _lzSend(
+            rewardsChainEid,
+            payload,
+            _rewardsOptions,
+            fee,
+            payable(msg.sender)
+        );
+        
+        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, fee.nativeFee);
+    }
+    
+    // ==================== HELPER FUNCTIONS ====================
+    
+    function _notifyRewardsContractLocal(address account, string memory actionType) private {
+        if (address(rewardsContract) != address(0)) {
+            try rewardsContract.notifyGovernanceAction(account) {
+                emit GovernanceActionNotified(account, actionType);
+            } catch Error(string memory reason) {
+                emit CrossContractCallFailed(account, string(abi.encodePacked("Local rewards notification failed: ", reason)));
+            } catch {
+                emit CrossContractCallFailed(account, "Local rewards notification failed: Unknown error");
             }
-        } else {
-            for (uint i = 0; i < job.milestonePayments.length; i++) {
-                job.finalMilestones.push(job.milestonePayments[i]);
+        }
+    }
+    
+    function _notifyRewardsContract(address account, string memory actionType) private {
+        // Default options for cross-chain messaging (can be made configurable)
+        bytes memory rewardsOptions = ""; // Empty options for now
+        
+        // Send cross-chain notification to rewards contract
+        _sendGovernanceNotificationCrossChain(account, actionType, rewardsOptions);
+    }
+    
+    function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) private {
+        if (address(athenaClient) != address(0)) {
+            try athenaClient.recordVote(disputeId, voter, claimAddress, votingPower, voteFor) {
+                // Success
+            } catch Error(string memory reason) {
+                emit CrossContractCallFailed(voter, string(abi.encodePacked("AthenaClient vote recording failed: ", reason)));
+            } catch {
+                emit CrossContractCallFailed(voter, "AthenaClient vote recording failed: Unknown error");
+            }
+        }
+    }
+    
+    // ==================== VOTING ELIGIBILITY FUNCTIONS ====================
+    
+    function canVote(address account) public view returns (bool) {
+        // First check if user has sufficient active stake
+        (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(account);
+        if (isActive && stakeAmount >= minStakeRequired) {
+            return true;
+        }
+        
+        // If no sufficient stake, check earned tokens from NOWJ contract
+        if (address(nowjContract) != address(0)) {
+            uint256 earnedTokens = nowjContract.getUserEarnedTokens(account);
+            return earnedTokens >= minStakeRequired;
+        }
+        
+        return false;
+    }
+    
+    function getUserVotingPower(address account) public view returns (uint256) {
+        uint256 totalVotingPower = 0;
+        
+        // Get stake-based voting power
+        (uint256 stakeAmount, , uint256 durationMinutes, bool isActive) = INativeDAO(daoContract).getStakerInfo(account);
+        if (isActive && stakeAmount > 0) {
+            totalVotingPower += stakeAmount * durationMinutes;
+        }
+        
+        // Add earned tokens voting power
+        if (address(nowjContract) != address(0)) {
+            uint256 earnedTokens = nowjContract.getUserEarnedTokens(account);
+            totalVotingPower += earnedTokens;
+        }
+        
+        return totalVotingPower;
+    }
+
+    function getUserVotingInfo(address account) external view returns (
+        bool hasActiveStake,
+        uint256 stakeAmount,
+        uint256 earnedTokens,
+        uint256 totalVotingPower,
+        bool meetsVotingThreshold
+    ) {
+        (uint256 stake, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(account);
+        hasActiveStake = isActive;
+        stakeAmount = hasActiveStake ? stake : 0;
+        
+        earnedTokens = 0;
+        if (address(nowjContract) != address(0)) {
+            earnedTokens = nowjContract.getUserEarnedTokens(account);
+        }
+        
+        totalVotingPower = getUserVotingPower(account);
+        meetsVotingThreshold = canVote(account);
+    }
+    
+    // ==================== ORACLE MANAGEMENT ====================
+    
+    function addOrUpdateOracle(
+        string[] memory _names,
+        address[][] memory _members,
+        string[] memory _shortDescriptions,
+        string[] memory _hashOfDetails,
+        address[][] memory _skillVerifiedAddresses
+    ) external onlyOwner {
+        require(_names.length == _members.length && 
+                _names.length == _shortDescriptions.length &&
+                _names.length == _hashOfDetails.length &&
+                _names.length == _skillVerifiedAddresses.length, 
+                "Array lengths must match");
+        
+        for (uint256 i = 0; i < _names.length; i++) {
+            oracles[_names[i]] = Oracle({
+                name: _names[i],
+                members: _members[i],
+                shortDescription: _shortDescriptions[i],
+                hashOfDetails: _hashOfDetails[i],
+                skillVerifiedAddresses: _skillVerifiedAddresses[i]
+            });
+        }
+    }
+    
+    function addMembers(address[] memory _members, string memory _oracleName) external onlyOwner {
+        require(bytes(oracles[_oracleName].name).length > 0, "Oracle not found");
+        
+        for (uint256 i = 0; i < _members.length; i++) {
+            require(canVote(_members[i]), "Member does not meet minimum stake/earned tokens requirement");
+            oracles[_oracleName].members.push(_members[i]);
+        }
+    }
+
+    function getOracleMembers(string memory _oracleName) external view returns (address[] memory) {
+        require(bytes(oracles[_oracleName].name).length > 0, "Oracle not found");
+        return oracles[_oracleName].members;
+    }
+    
+    function removeMemberFromOracle(string memory _oracleName, address _memberToRemove) external onlyDAO {
+        require(bytes(oracles[_oracleName].name).length > 0, "Oracle not found");
+        
+        address[] storage members = oracles[_oracleName].members;
+        for (uint256 i = 0; i < members.length; i++) {
+            if (members[i] == _memberToRemove) {
+                members[i] = members[members.length - 1];
+                members.pop();
+                break;
+            }
+        }
+    }
+
+    function removeOracle(string[] memory _oracleNames) external onlyDAO {
+        for (uint256 i = 0; i < _oracleNames.length; i++) {
+            delete oracles[_oracleNames[i]];
+        }
+    }
+    
+    // ==================== SKILL VERIFICATION ====================
+    
+    function approveSkillVerification(uint256 _applicationId) external onlyDAO {
+        require(_applicationId < applicationCounter, "Invalid application ID");
+        
+        SkillVerificationApplication memory application = skillApplications[_applicationId];
+        require(bytes(oracles[application.targetOracleName].name).length > 0, "Oracle not found");
+        
+        oracles[application.targetOracleName].skillVerifiedAddresses.push(application.applicant);
+        skillVerificationDates[application.targetOracleName][application.applicant] = block.timestamp;
+    }
+    
+    // ==================== DIRECT SUBMISSION FUNCTIONS (for local use) ====================
+    
+    function raiseDispute(
+        string memory _jobId,
+        string memory _disputeHash,
+        string memory _oracleName,
+        uint256 _fee
+    ) external {
+        _handleRaiseDispute(_jobId, _disputeHash, _oracleName, _fee);
+    }
+    
+    function submitSkillVerification(
+        string memory _applicationHash,
+        uint256 _feeAmount,
+        string memory _targetOracleName
+    ) external {
+        _handleSubmitSkillVerification(msg.sender, _applicationHash, _feeAmount, _targetOracleName);
+    }
+
+    function askAthena(
+        string memory _description,
+        string memory _hash,
+        string memory _targetOracle,
+        string memory _fees
+    ) external {
+        _handleAskAthena(msg.sender, _description, _hash, _targetOracle, _fees);
+    }
+    
+    // ==================== VOTING FUNCTIONS ====================
+    
+    function vote(VotingType _votingType, string memory _disputeId, bool _voteFor, address _claimAddress) external {
+        // Check if user can vote (has sufficient stake OR earned tokens)
+        require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
+        require(_claimAddress != address(0), "Claim address cannot be zero");
+        
+        // Calculate total vote weight (stake weight + earned tokens)
+        uint256 voteWeight = getUserVotingPower(msg.sender);
+        require(voteWeight > 0, "No voting power");
+        
+        // Notify rewards contract about governance action
+        string memory votingTypeStr = _votingType == VotingType.Dispute ? "dispute_vote" : 
+                                     _votingType == VotingType.SkillVerification ? "skill_verification_vote" : "ask_athena_vote";
+        _notifyRewardsContract(msg.sender, votingTypeStr);
+        
+        // Emit event if user is using earned tokens (no active stake above threshold)
+        (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
+        if (!isActive || stakeAmount < minStakeRequired) {
+            if (address(nowjContract) != address(0)) {
+                uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
+                if (earnedTokens >= minStakeRequired) {
+                    string memory votingTypeStrShort = _votingType == VotingType.Dispute ? "dispute" : 
+                                                      _votingType == VotingType.SkillVerification ? "skill_verification" : "ask_athena";
+                    emit EarnedTokensUsedForVoting(msg.sender, earnedTokens, votingTypeStrShort);
+                }
             }
         }
         
-        emit JobStarted(jobId, applicationId, application.applicant, useApplicantMilestones, sourceChain);
-        emit JobStatusChanged(jobId, JobStatus.InProgress);
+        if (_votingType == VotingType.Dispute) {
+            require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+            require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
+            
+            Dispute storage dispute = disputes[_disputeId];
+            require(dispute.isVotingActive, "Voting is not active for this dispute");
+            require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnDispute[_disputeId][msg.sender] = true;
+            
+            if (_voteFor) {
+                dispute.votesFor += voteWeight;
+            } else {
+                dispute.votesAgainst += voteWeight;
+            }
+            
+            // Notify AthenaClient about the vote for fee distribution
+            _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            
+        } else if (_votingType == VotingType.SkillVerification) {
+            // Convert disputeId to uint for skill verification (assuming it's passed as string number)
+            uint256 applicationId = stringToUint(_disputeId);
+            require(applicationId < applicationCounter, "Application does not exist");
+            require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
+            
+            SkillVerificationApplication storage application = skillApplications[applicationId];
+            require(application.isVotingActive, "Voting is not active for this application");
+            require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnSkillApplication[applicationId][msg.sender] = true;
+            
+            if (_voteFor) {
+                application.votesFor += voteWeight;
+            } else {
+                application.votesAgainst += voteWeight;
+            }
+            
+        } else if (_votingType == VotingType.AskAthena) {
+            // Convert disputeId to uint for ask athena (assuming it's passed as string number)
+            uint256 athenaId = stringToUint(_disputeId);
+            require(athenaId < askAthenaCounter, "AskAthena application does not exist");
+            require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
+            
+            AskAthenaApplication storage athenaApp = askAthenaApplications[athenaId];
+            require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
+            require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnAskAthena[athenaId][msg.sender] = true;
+            
+            if (_voteFor) {
+                athenaApp.votesFor += voteWeight;
+            } else {
+                athenaApp.votesAgainst += voteWeight;
+            }
+        }
     }
     
-    function _submitWork(address applicant, string memory jobId, string memory submissionHash, uint32 sourceChain) internal {
-        jobs[jobId].workSubmissions.push(submissionHash);
-        emit WorkSubmitted(jobId, applicant, submissionHash, jobs[jobId].currentMilestone, sourceChain);
-    }
-    
-    function _releasePayment(address jobGiver, string memory jobId, uint256 amount, uint32 sourceChain) internal {
-        jobs[jobId].totalPaid += amount;
+    // Function to finalize dispute - can be called by anyone
+    function finalizeDispute(string memory _disputeId) external {
+        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
         
-        if (jobs[jobId].currentMilestone == jobs[jobId].finalMilestones.length) {
-            jobs[jobId].status = JobStatus.Completed;
-            emit JobStatusChanged(jobId, JobStatus.Completed);
+        Dispute storage dispute = disputes[_disputeId];
+        require(dispute.isVotingActive, "Voting is not active for this dispute");
+        require(!dispute.isFinalized, "Dispute already finalized");
+        require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
+        
+        // Finalize the dispute
+        dispute.isVotingActive = false;
+        dispute.isFinalized = true;
+        dispute.result = dispute.votesFor > dispute.votesAgainst;
+        
+        // Notify AthenaClient about finalization using string disputeId
+        if (address(athenaClient) != address(0)) {
+            try athenaClient.finalizeDispute(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst) {
+                // Success
+            } catch Error(string memory reason) {
+                emit CrossContractCallFailed(msg.sender, string(abi.encodePacked("AthenaClient finalization failed: ", reason)));
+            } catch {
+                emit CrossContractCallFailed(msg.sender, "AthenaClient finalization failed: Unknown error");
+            }
         }
         
-        emit PaymentReleased(jobId, jobGiver, jobs[jobId].selectedApplicant, amount, jobs[jobId].currentMilestone, sourceChain);
+        emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
     }
     
-    function _lockNextMilestone(address caller, string memory jobId, uint256 lockedAmount, uint32 sourceChain) internal {
-        require(jobs[jobId].currentMilestone < jobs[jobId].finalMilestones.length, "All milestones already completed");
-        
-        jobs[jobId].currentMilestone += 1;
-        
-        emit MilestoneLocked(jobId, jobs[jobId].currentMilestone, lockedAmount, sourceChain);
-    }
+    // ==================== UTILITY FUNCTIONS ====================
     
-    function _releasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount, uint32 sourceChain) internal {
-        jobs[jobId].totalPaid += releasedAmount;
-        jobs[jobId].currentMilestone += 1;
-        
-        if (jobs[jobId].currentMilestone > jobs[jobId].finalMilestones.length) {
-            jobs[jobId].status = JobStatus.Completed;
-            emit JobStatusChanged(jobId, JobStatus.Completed);
+    function stringToUint(string memory s) internal pure returns (uint256) {
+        bytes memory b = bytes(s);
+        uint256 result = 0;
+        for (uint256 i = 0; i < b.length; i++) {
+            if (b[i] >= 0x30 && b[i] <= 0x39) {
+                result = result * 10 + (uint256(uint8(b[i])) - 48);
+            }
         }
-        
-        emit PaymentReleasedAndNextMilestoneLocked(jobId, releasedAmount, lockedAmount, jobs[jobId].currentMilestone, sourceChain);
+        return result;
     }
     
-    function _rate(address rater, string memory jobId, address userToRate, uint256 rating, uint32 sourceChain) internal {
-        bool isAuthorized = false;
-        
-        if (rater == jobs[jobId].jobGiver && userToRate == jobs[jobId].selectedApplicant) {
-            isAuthorized = true;
-        } else if (rater == jobs[jobId].selectedApplicant && userToRate == jobs[jobId].jobGiver) {
-            isAuthorized = true;
-        }
-        
-        require(isAuthorized, "Not authorized to rate this user for this job");
-        
-        jobRatings[jobId][userToRate] = rating;
-        userRatings[userToRate].push(rating);
-        
-        emit UserRated(jobId, rater, userToRate, rating, sourceChain);
+    function updateMinOracleMembers(uint256 _newMinMembers) external onlyDAO {
+        minOracleMembers = _newMinMembers;
     }
     
-    function _addPortfolio(address user, string memory portfolioHash, uint32 sourceChain) internal {
-        profiles[user].portfolioHashes.push(portfolioHash);
-        emit PortfolioAdded(user, portfolioHash, sourceChain);
+    // ==================== VIEW FUNCTIONS ====================
+    
+    function getStakerInfoFromDAO(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) {
+        return INativeDAO(daoContract).getStakerInfo(staker);
     }
     
-    // Local function versions (for testing or direct calls)
-    function createProfile(address user, string memory ipfsHash, address referrer) external {
-        _createProfile(user, ipfsHash, referrer, 0); // 0 indicates local creation
-    }
-    
-    function postJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external {
-        _postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts, 0);
-    }
-    
-    function applyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external {
-        _applyToJob(applicant, jobId, applicationHash, descriptions, amounts, 0);
-    }
-    
-    function startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external {
-        _startJob(jobGiver, jobId, applicationId, useApplicantMilestones, 0);
-    }
-    
-    function submitWork(address applicant, string memory jobId, string memory submissionHash) external {
-        _submitWork(applicant, jobId, submissionHash, 0);
-    }
-    
-    function releasePayment(address jobGiver, string memory jobId, uint256 amount) external {
-        _releasePayment(jobGiver, jobId, amount, 0);
-    }
-    
-    function lockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) external {
-        _lockNextMilestone(caller, jobId, lockedAmount, 0);
-    }
-    
-    function releasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external {
-        _releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount, 0);
-    }
-    
-    function rate(address rater, string memory jobId, address userToRate, uint256 rating) external {
-        _rate(rater, jobId, userToRate, rating, 0);
-    }
-    
-    function addPortfolio(address user, string memory portfolioHash) external {
-        _addPortfolio(user, portfolioHash, 0);
-    }
-    
-    // View functions
-    function getProfile(address _user) public view returns (Profile memory) {
-        require(hasProfile[_user], "Profile does not exist");
-        return profiles[_user];
-    }
-    
-    function getJob(string memory _jobId) public view returns (Job memory) {
-        return jobs[_jobId];
-    }
-    
-    function getApplication(string memory _jobId, uint256 _applicationId) public view returns (Application memory) {
-        require(jobApplications[_jobId][_applicationId].id != 0, "Application does not exist");
-        return jobApplications[_jobId][_applicationId];
-    }
-    
-    function getRating(address _user) public view returns (uint256) {
-        uint256[] memory ratings = userRatings[_user];
-        if (ratings.length == 0) {
+    function getEarnedTokensFromJob(address user) external view returns (uint256) {
+        if (address(nowjContract) == address(0)) {
             return 0;
         }
-        
-        uint256 totalRating = 0;
-        for (uint i = 0; i < ratings.length; i++) {
-            totalRating += ratings[i];
+        return nowjContract.getUserEarnedTokens(user);
+    }
+    
+    function getJobDetails(string memory _jobId) external view returns (
+        bool exists,
+        address jobGiver,
+        address selectedApplicant,
+        uint8 status,
+        string memory jobDetailHash
+    ) {
+        if (address(nowjContract) == address(0)) {
+            return (false, address(0), address(0), 0, "");
         }
         
-        return totalRating / ratings.length;
+        exists = nowjContract.jobExists(_jobId);
+        
+        if (!exists) {
+            return (false, address(0), address(0), 0, "");
+        }
+        
+        (
+            ,
+            jobGiver,
+            ,
+            jobDetailHash,
+            status,
+            ,
+            ,
+            ,
+            selectedApplicant,
+        ) = nowjContract.getJob(_jobId);
     }
     
-    function getUserReferrer(address user) external view returns (address) {
-        return userReferrers[user];
+    function getDispute(string memory _disputeId) external view returns (Dispute memory) {
+        return disputes[_disputeId];
     }
     
-    function isChainAuthorized(uint32 chainEid) external view returns (bool) {
-        return authorizedChains[chainEid];
+    function getSkillApplication(uint256 _applicationId) external view returns (SkillVerificationApplication memory) {
+        return skillApplications[_applicationId];
     }
     
-    function getJobCount() external view returns (uint256) {
-        return jobCounter;
+    function getAskAthenaApplication(uint256 _applicationId) external view returns (AskAthenaApplication memory) {
+        return askAthenaApplications[_applicationId];
     }
     
-    function getAllJobIds() external view returns (string[] memory) {
-        return allJobIds;
+    function getRewardsChainEid() external view returns (uint32) {
+        return rewardsChainEid;
     }
     
-    function getJobsByPoster(address _poster) external view returns (string[] memory) {
-        return jobsByPoster[_poster];
-    }
+    // ==================== QUOTE FUNCTIONS ====================
     
-    function getJobApplicationCount(string memory _jobId) external view returns (uint256) {
-        return jobApplicationCounter[_jobId];
-    }
-    
-    function isJobOpen(string memory _jobId) external view returns (bool) {
-        return jobs[_jobId].status == JobStatus.Open;
-    }
-    
-    function getJobStatus(string memory _jobId) external view returns (JobStatus) {
-        return jobs[_jobId].status;
-    }
-    
-    function jobExists(string memory _jobId) external view returns (bool) {
-        return bytes(jobs[_jobId].id).length != 0;
+    function quoteGovernanceNotification(
+        address account,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        if (rewardsChainEid == 0) return 0;
+        
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
+        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _options, false);
+        return msgFee.nativeFee;
     }
 }
