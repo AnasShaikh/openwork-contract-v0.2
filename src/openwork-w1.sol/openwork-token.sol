@@ -19,8 +19,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract VotingToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
     
     // Initial supply of tokens (adjust as needed)
-    uint256 public constant INITIAL_SUPPLY = 1_000_000 * 10**18; // 1 million tokens
-    
+    uint256 public constant INITIAL_SUPPLY = 1_000_000_000 * 10**18; // 1 billion tokens
+
     /**
      * @dev Constructor that sets up the token with initial parameters
      * @param initialOwner Address that will own the contract

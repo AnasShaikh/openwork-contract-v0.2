@@ -88,8 +88,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     string[] public allJobIds;
     mapping(address => string[]) public jobsByPoster;
     
-    IRewardsTrackingContract public rewardsContract;
-    
     // ==================== EVENTS ====================
     
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
@@ -305,9 +303,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
             emit JobStatusChanged(jobId, JobStatus.Completed);
         }
         
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(jobId, amount, totalPlatformPayments);
-        }
         
         emit PaymentReleased(jobId, jobGiver, jobs[jobId].selectedApplicant, amount, jobs[jobId].currentMilestone);
     }
@@ -368,9 +363,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
             emit JobStatusChanged(jobId, JobStatus.Completed);
         }
         
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(jobId, releasedAmount, totalPlatformPayments);
-        }
         
         emit PaymentReleasedAndNextMilestoneLocked(jobId, releasedAmount, lockedAmount, jobs[jobId].currentMilestone);
     }
@@ -490,10 +482,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
 
     // ==================== EXISTING CONTRACT FUNCTIONS ====================
     
-    function setRewardsContract(address _rewardsContract) external onlyOwner {
-        rewardsContract = IRewardsTrackingContract(_rewardsContract);
-    }
-    
+
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
         require(!hasProfile[_user], "Profile already exists");
         
@@ -666,10 +655,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(_jobId, _amount, totalPlatformPayments);
-        }
-        
         emit PaymentReleased(_jobId, _jobGiver, jobs[_jobId].selectedApplicant, _amount, jobs[_jobId].currentMilestone);
     }
     
@@ -728,10 +713,6 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         if (jobs[_jobId].currentMilestone > jobs[_jobId].finalMilestones.length) {
             jobs[_jobId].status = JobStatus.Completed;
             emit JobStatusChanged(_jobId, JobStatus.Completed);
-        }
-        
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.updateRewards(_jobId, _releasedAmount, totalPlatformPayments);
         }
         
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, jobs[_jobId].currentMilestone);

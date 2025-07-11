@@ -336,7 +336,7 @@ contract CrossChainNativeAthena is OAppReceiver {
         string[] memory _shortDescriptions,
         string[] memory _hashOfDetails,
         address[][] memory _skillVerifiedAddresses
-    ) external onlyOwner {
+    ) external onlyDAO {
         require(_names.length == _members.length && 
                 _names.length == _shortDescriptions.length &&
                 _names.length == _hashOfDetails.length &&
@@ -354,7 +354,7 @@ contract CrossChainNativeAthena is OAppReceiver {
         }
     }
     
-    function addMembers(address[] memory _members, string memory _oracleName) external onlyOwner {
+    function addMembers(address[] memory _members, string memory _oracleName) external onlyDAO {
         require(bytes(oracles[_oracleName].name).length > 0, "Oracle not found");
         
         for (uint256 i = 0; i < _members.length; i++) {

@@ -47,6 +47,7 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     
     // Job tracking
     uint256 public currentTotalPlatformPayments;
+    address public mainDAOContract;
     
     // Reward bands arrays
     RewardBand[] public rewardBands;
@@ -164,6 +165,14 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     function setOpenworkToken(address _token) external onlyOwner {
         openworkToken = IERC20(_token);
         emit ContractUpdated("OpenworkToken", _token);
+    }
+
+    //
+
+    // Add this modifier after the existing contract declarations
+    modifier onlyMainDAO() {
+        require(msg.sender == mainDAOContract, "Only Main DAO can call this function");
+        _;
     }
     
     function setMainDAO(address _mainDAO) external onlyOwner {
@@ -325,7 +334,7 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     
     // GOVERNANCE REWARDS FUNCTIONS
     
-    function notifyGovernanceAction(address account) external onlyOwner {
+    function notifyGovernanceAction(address account) external onlyMainDAO {
         governanceActionCount[account]++;
         emit GovernanceActionNotified(account, governanceActionCount[account]);
     }

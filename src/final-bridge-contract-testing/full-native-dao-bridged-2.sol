@@ -211,7 +211,7 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     
     function _incrementGovernanceActions(address account, string memory actionType) private {
         // Default options for cross-chain messaging (can be made configurable)
-        bytes memory rewardsOptions = ""; // Empty options for now
+        bytes memory rewardsOptions = "0x0003010011010000000000000000000000000007a120"; // Empty options for now
         
         // Send cross-chain notification to rewards contract
         _sendGovernanceNotificationCrossChain(account, actionType, rewardsOptions);
