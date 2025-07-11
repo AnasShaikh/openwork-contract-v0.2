@@ -334,7 +334,7 @@ contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     
     // GOVERNANCE REWARDS FUNCTIONS
     
-    function notifyGovernanceAction(address account) external onlyMainDAO {
+    function notifyGovernanceAction(address account) external {
         governanceActionCount[account]++;
         emit GovernanceActionNotified(account, governanceActionCount[account]);
     }
