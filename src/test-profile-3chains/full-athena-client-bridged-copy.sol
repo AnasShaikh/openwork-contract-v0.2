@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
 import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
 import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+interface ISkillOracle {
+    function raiseDispute(string memory _jobId, string memory _disputeHash, string memory _oracleName, uint256 _fee) external;
+    function submitSkillVerification(string memory _applicationHash, uint256 _feeAmount, string memory _targetOracleName) external;
+    function askAthena(string memory _description, string memory _hash, string memory _targetOracle, string memory _fees) external;
+}
 
 interface ILocalOpenWorkJobContract {
     enum JobStatus { Open, InProgress, Completed, Cancelled }
@@ -30,13 +34,13 @@ interface ILocalOpenWorkJobContract {
     }
     
     function getJob(string memory _jobId) external view returns (Job memory);
-    function resolveDispute(string memory jobId, bool jobGiverWins) external;
 }
 
-contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
+contract AthenaClientContract is OAppSender, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     IERC20 public immutable usdtToken;
+    ISkillOracle public immutable skillOracle;
     ILocalOpenWorkJobContract public jobContract;
     uint32 public immutable chainId;
     
@@ -56,7 +60,6 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
         uint256 totalVotingPowerAgainst;
         bool winningSide;
         bool isFinalized;
-        address disputeRaiser;
         VoteRecord[] votes;
     }
     
@@ -77,123 +80,31 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     event DisputeFeesFinalized(string indexed disputeId, bool winningSide, uint256 totalFees);
     event FeesClaimed(string indexed disputeId, address indexed claimAddress, uint256 amount);
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
-    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     event NativeChainUpdated(uint32 newChainEid);
+    
+    modifier onlySkillOracle() {
+        require(msg.sender == address(skillOracle), "Only SkillOracle can call this function");
+        _;
+    }
     
     constructor(
         address _endpoint,
         address _owner,
         address _usdtToken,
+        address _skillOracle,
         uint32 _chainId,
         uint32 _nativeChainEid
     ) OAppCore(_endpoint, _owner) Ownable(_owner) {
         usdtToken = IERC20(_usdtToken);
+        skillOracle = ISkillOracle(_skillOracle);
         chainId = _chainId;
         nativeChainEid = _nativeChainEid;
-    }
-    
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
     }
     
     // Override to change fee check from equivalency to < since batch fees are cumulative
     function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
         if (msg.value < _nativeFee) revert("Insufficient native fee");
         return _nativeFee;
-    }
-    
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        if (keccak256(bytes(functionName)) == keccak256(bytes("finalizeDispute"))) {
-            (, string memory disputeId, bool winningSide, uint256 totalVotingPowerFor, uint256 totalVotingPowerAgainst) = abi.decode(_message, (string, string, bool, uint256, uint256));
-            _handleFinalizeDispute(disputeId, winningSide, totalVotingPowerFor, totalVotingPowerAgainst);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("recordVote"))) {
-            (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) = abi.decode(_message, (string, string, address, address, uint256, bool));
-            _handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
-        }
-        
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
-    }
-    
-    // ==================== MESSAGE HANDLERS ====================
-    
-   function _handleFinalizeDispute(string memory disputeId, bool winningSide, uint256 /* totalVotingPowerFor */, uint256 /* totalVotingPowerAgainst */) internal {
-    require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
-    require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
-    
-    DisputeFees storage dispute = disputeFees[disputeId];
-    dispute.winningSide = winningSide;
-    dispute.isFinalized = true;
-    
-    // Only distribute fees if there are recorded votes
-    if (dispute.votes.length > 0) {
-        uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
-        
-        if (totalWinningVotingPower > 0) {
-            for (uint256 i = 0; i < dispute.votes.length; i++) {
-                VoteRecord memory vote = dispute.votes[i];
-                
-                // Only winning voters get fees
-                if (vote.voteFor == winningSide) {
-                    uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
-                    claimableAmount[disputeId][vote.claimAddress] += voterShare;
-                }
-            }
-        }
-    }
-    
-    // Resolve the actual job dispute if job contract is set
-    if (address(jobContract) != address(0)) {
-        // Get job details to determine participants
-        ILocalOpenWorkJobContract.Job memory job = jobContract.getJob(disputeId);
-        
-        // Determine who wins the job funds based on dispute raiser and voting result
-        bool jobGiverWins;
-        if (dispute.disputeRaiser == job.jobGiver) {
-            // Job giver raised dispute
-            jobGiverWins = winningSide; // Job giver wins if dispute raiser (job giver) wins
-        } else {
-            // Job taker raised dispute  
-            jobGiverWins = !winningSide; // Job giver wins if dispute raiser (job taker) loses
-        }
-        
-        // Resolve the job dispute
-        jobContract.resolveDispute(disputeId, jobGiverWins);
-    }
-    
-    emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
-}
-    
-    function _handleRecordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) internal {
-        require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
-        require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
-        
-        // Record the vote
-        disputeFees[disputeId].votes.push(VoteRecord({
-            voter: voter,
-            claimAddress: claimAddress,
-            votingPower: votingPower,
-            voteFor: voteFor
-        }));
-        
-        // Update totals
-        if (voteFor) {
-            disputeFees[disputeId].totalVotingPowerFor += votingPower;
-        } else {
-            disputeFees[disputeId].totalVotingPowerAgainst += votingPower;
-        }
-        
-        emit VoteRecorded(disputeId, voter, claimAddress, votingPower, voteFor);
     }
     
     /**
@@ -253,15 +164,15 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
         dispute.totalVotingPowerAgainst = 0;
         dispute.winningSide = false;
         dispute.isFinalized = false;
-        dispute.disputeRaiser = msg.sender;
         
         // Mark dispute as existing for this job
         jobDisputeExists[_jobId] = true;
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
+        // Call the SkillOracle contract locally
+        skillOracle.raiseDispute(_jobId, _disputeHash, _oracleName, _feeAmount);
         
         // Send cross-chain message to Native Athena
-        bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount, msg.sender);
+        bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount);
         _lzSend(
             nativeChainEid,
             payload,
@@ -288,7 +199,8 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
             "USDT transfer failed"
         );
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
+        // Call the SkillOracle contract locally
+        skillOracle.submitSkillVerification(_applicationHash, _feeAmount, _targetOracleName);
         
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("submitSkillVerification", msg.sender, _applicationHash, _feeAmount, _targetOracleName);
@@ -313,7 +225,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     ) external payable nonReentrant {
         require(_feeAmount > 0, "Fee amount must be greater than 0");
         
-        // Convert fee amount to string for the cross-chain call
+        // Convert fee amount to string for the SkillOracle call
         string memory feeString = uint2str(_feeAmount);
         
         // Transfer USDT from caller to this contract
@@ -322,7 +234,8 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
             "USDT transfer failed"
         );
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
+        // Call the SkillOracle contract locally
+        skillOracle.askAthena(_description, _hash, _targetOracle, feeString);
         
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("askAthena", msg.sender, _description, _hash, _targetOracle, feeString);
@@ -336,6 +249,56 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
         
         emit AthenaAsked(msg.sender, _targetOracle, _feeAmount);
         emit CrossChainMessageSent("askAthena", nativeChainEid, payload);
+    }
+    
+    // Function called by SkillOracle to record votes
+    function recordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external onlySkillOracle {
+        require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
+        require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
+        
+        // Record the vote
+        disputeFees[disputeId].votes.push(VoteRecord({
+            voter: voter,
+            claimAddress: claimAddress,
+            votingPower: votingPower,
+            voteFor: voteFor
+        }));
+        
+        // Update totals
+        if (voteFor) {
+            disputeFees[disputeId].totalVotingPowerFor += votingPower;
+        } else {
+            disputeFees[disputeId].totalVotingPowerAgainst += votingPower;
+        }
+        
+        emit VoteRecorded(disputeId, voter, claimAddress, votingPower, voteFor);
+    }
+    
+    // Function called by SkillOracle to finalize dispute and calculate fee distribution
+    function finalizeDispute(string memory disputeId, bool winningSide, uint256 /* totalVotingPowerFor */, uint256 /* totalVotingPowerAgainst */) external onlySkillOracle {
+        require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
+        require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
+        
+        DisputeFees storage dispute = disputeFees[disputeId];
+        dispute.winningSide = winningSide;
+        dispute.isFinalized = true;
+        
+        // Calculate fee distribution for winning voters
+        uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
+        
+        if (totalWinningVotingPower > 0) {
+            for (uint256 i = 0; i < dispute.votes.length; i++) {
+                VoteRecord memory vote = dispute.votes[i];
+                
+                // Only winning voters get fees
+                if (vote.voteFor == winningSide) {
+                    uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
+                    claimableAmount[disputeId][vote.claimAddress] += voterShare;
+                }
+            }
+        }
+        
+        emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
     }
     
     // Function for voters to claim their fees

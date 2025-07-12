@@ -161,8 +161,8 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         (string memory functionName) = abi.decode(_message, (string));
         
         if (keccak256(bytes(functionName)) == keccak256(bytes("raiseDispute"))) {
-            (, string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) = abi.decode(_message, (string, string, string, string, uint256, address));
-            _handleRaiseDispute(jobId, disputeHash, oracleName, fee, disputeRaiser);
+            (, string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee) = abi.decode(_message, (string, string, string, string, uint256));
+            _handleRaiseDispute(jobId, disputeHash, oracleName, fee);
         } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitSkillVerification"))) {
             (, address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) = abi.decode(_message, (string, address, string, uint256, string));
             _handleSubmitSkillVerification(applicant, applicationHash, feeAmount, targetOracleName);
@@ -176,7 +176,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
 
     // ==================== MESSAGE HANDLERS ====================
     
-    function _handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) internal {
+    function _handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee) internal {
         // Check if oracle is active (has minimum required members)
         require(oracles[oracleName].members.length >= minOracleMembers, "Oracle not active");
         
@@ -188,7 +188,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             jobId: jobId,
             disputedAmount: fee,
             hash: disputeHash,
-            disputeRaiserAddress: disputeRaiser,
+            disputeRaiserAddress: msg.sender, // This will be the AthenaClient contract
             votesFor: 0,
             votesAgainst: 0,
             result: false,
@@ -198,7 +198,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             fees: fee
         });
         
-        emit DisputeRaised(jobId, disputeRaiser, fee);
+        emit DisputeRaised(jobId, msg.sender, fee);
     }
     
     function _handleSubmitSkillVerification(address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) internal {
@@ -256,17 +256,18 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     // ==================== HELPER FUNCTIONS ====================
     
-    function _notifyRewardsContract(address account, string memory actionType, bytes memory _options, uint256 nativeFee) private {
+    function _notifyRewardsContract(address account, string memory actionType, bytes memory _options) private {
         if (rewardsChainEid == 0) {
             emit CrossContractCallFailed(account, "No rewards chain configured");
             return;
         }
         
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
+        MessagingFee memory fee = _quote(rewardsChainEid, payload, _options, false);
         
-        _lzSend(rewardsChainEid, payload, _options, MessagingFee(nativeFee, 0), payable(msg.sender));
+        _lzSend(rewardsChainEid, payload, _options, fee, payable(msg.sender));
         
-        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, nativeFee);
+        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, fee.nativeFee);
     }
     
     function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) private {
@@ -416,7 +417,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         string memory _oracleName,
         uint256 _fee
     ) external {
-        _handleRaiseDispute(_jobId, _disputeHash, _oracleName, _fee, msg.sender);
+        _handleRaiseDispute(_jobId, _disputeHash, _oracleName, _fee);
     }
     
     function submitSkillVerification(
@@ -450,7 +451,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         // Notify rewards contract about governance action
         string memory votingTypeStr = _votingType == VotingType.Dispute ? "dispute_vote" : 
                                      _votingType == VotingType.SkillVerification ? "skill_verification_vote" : "ask_athena_vote";
-        _notifyRewardsContract(msg.sender, votingTypeStr, _options, msg.value);
+        _notifyRewardsContract(msg.sender, votingTypeStr, _options);
         
         // Emit event if user is using earned tokens (no active stake above threshold)
         (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
