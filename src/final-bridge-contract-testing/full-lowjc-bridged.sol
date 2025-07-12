@@ -61,6 +61,8 @@ contract CrossChainLocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     mapping(string => mapping(address => uint256)) public jobRatings;
     mapping(address => uint256[]) public userRatings;
     uint256 public jobCounter;
+    address public athenaClientContract;
+
     
     // Platform total tracking for rewards (local tracking only)
     uint256 public totalPlatformPayments;
@@ -87,6 +89,7 @@ contract CrossChainLocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
     event PlatformTotalUpdated(uint256 newTotal);
     event CrossChainMessageSent(string indexed functionName, uint32[] dstEids, bytes payload);
+    event DisputeResolved(string indexed jobId, bool jobGiverWins, address winner, uint256 amount);
     
     constructor(
         address _endpoint,
@@ -577,7 +580,50 @@ contract CrossChainLocalOpenWorkJobContract is OAppSender, ReentrancyGuard {
             fee2,
             payable(msg.sender)
         );
+    
+    
     }
+
+    function resolveDispute(string memory _jobId, bool _jobGiverWins) external {
+    // Only allow Athena Client contract to call this
+    require(msg.sender == address(athenaClientContract), "Only Athena Client can resolve disputes");
+    
+    Job storage job = jobs[_jobId];
+    require(bytes(job.id).length != 0, "Job does not exist");
+    require(job.status == JobStatus.InProgress, "Job must be in progress");
+    require(job.currentLockedAmount > 0, "No funds escrowed");
+    
+    address winner;
+    uint256 amount = job.currentLockedAmount;
+    
+    if (_jobGiverWins) {
+        // Job giver wins - refund the escrowed amount
+        winner = job.jobGiver;
+        usdtToken.safeTransfer(job.jobGiver, amount);
+    } else {
+        // Job taker wins - release payment to them
+        winner = job.selectedApplicant;
+        usdtToken.safeTransfer(job.selectedApplicant, amount);
+        
+        // Update platform totals since this counts as a payment
+        totalPlatformPayments += amount;
+        job.totalPaid += amount;
+        emit PlatformTotalUpdated(totalPlatformPayments);
+    }
+    
+    // Clear escrowed amount and mark job as completed
+    job.currentLockedAmount = 0;
+    job.totalReleased += amount;
+    job.status = JobStatus.Completed;
+    
+    emit DisputeResolved(_jobId, _jobGiverWins, winner, amount);
+    emit JobStatusChanged(_jobId, JobStatus.Completed);
+}
+
+    function setAthenaClientContract(address _athenaClient) external onlyOwner {
+    require(_athenaClient != address(0), "Athena client address cannot be zero");
+    athenaClientContract = _athenaClient;
+}
     
     function _getSingleChainArray(uint32 _chainEid) internal pure returns (uint32[] memory) {
         uint32[] memory result = new uint32[](1);

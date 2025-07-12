@@ -532,7 +532,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     }
     
     // Function to finalize dispute - can be called by anyone
-   // Function to finalize dispute - can be called by anyone
 function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
     require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
     
@@ -546,9 +545,9 @@ function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientO
     dispute.isFinalized = true;
     dispute.result = dispute.votesFor > dispute.votesAgainst;
     
-    // Send cross-chain message to AthenaClient about finalization
+    // Send simplified cross-chain message to AthenaClient with only the winning side
     uint32 athenaClientChainEid = 40231; // Arbitrum Sepolia
-    bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
+    bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
     
     _lzSend(
         athenaClientChainEid,

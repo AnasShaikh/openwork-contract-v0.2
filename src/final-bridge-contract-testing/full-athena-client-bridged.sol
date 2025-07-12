@@ -105,29 +105,30 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        if (keccak256(bytes(functionName)) == keccak256(bytes("finalizeDispute"))) {
-            (, string memory disputeId, bool winningSide, uint256 totalVotingPowerFor, uint256 totalVotingPowerAgainst) = abi.decode(_message, (string, string, bool, uint256, uint256));
-            _handleFinalizeDispute(disputeId, winningSide, totalVotingPowerFor, totalVotingPowerAgainst);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("recordVote"))) {
-            (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) = abi.decode(_message, (string, string, address, address, uint256, bool));
-            _handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
-        }
-        
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+   function _lzReceive(
+    Origin calldata _origin,
+    bytes32, // _guid (not used)
+    bytes calldata _message,
+    address, // _executor (not used)
+    bytes calldata // _extraData (not used)
+) internal override {
+    (string memory functionName) = abi.decode(_message, (string));
+    
+    if (keccak256(bytes(functionName)) == keccak256(bytes("finalizeDispute"))) {
+        // Simplified: only receive disputeId and winningSide
+        (, string memory disputeId, bool winningSide) = abi.decode(_message, (string, string, bool));
+        _handleFinalizeDispute(disputeId, winningSide);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("recordVote"))) {
+        (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) = abi.decode(_message, (string, string, address, address, uint256, bool));
+        _handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
     }
+    
+    emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+}
     
     // ==================== MESSAGE HANDLERS ====================
     
-   function _handleFinalizeDispute(string memory disputeId, bool winningSide, uint256 /* totalVotingPowerFor */, uint256 /* totalVotingPowerAgainst */) internal {
+function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
     require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
     require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
     
@@ -135,7 +136,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     dispute.winningSide = winningSide;
     dispute.isFinalized = true;
     
-    // Only distribute fees if there are recorded votes
+    // Distribute fees using locally stored vote data
     if (dispute.votes.length > 0) {
         uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
         
@@ -152,24 +153,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
         }
     }
     
-    // Resolve the actual job dispute if job contract is set
-    if (address(jobContract) != address(0)) {
-        // Get job details to determine participants
-        ILocalOpenWorkJobContract.Job memory job = jobContract.getJob(disputeId);
-        
-        // Determine who wins the job funds based on dispute raiser and voting result
-        bool jobGiverWins;
-        if (dispute.disputeRaiser == job.jobGiver) {
-            // Job giver raised dispute
-            jobGiverWins = winningSide; // Job giver wins if dispute raiser (job giver) wins
-        } else {
-            // Job taker raised dispute  
-            jobGiverWins = !winningSide; // Job giver wins if dispute raiser (job taker) loses
-        }
-        
-        // Resolve the job dispute
-        jobContract.resolveDispute(disputeId, jobGiverWins);
-    }
+
     
     emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
 }
