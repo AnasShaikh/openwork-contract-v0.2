@@ -127,6 +127,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
     event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
+    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
     
     modifier onlyDAO() {
         require(msg.sender == daoContract, "Only DAO can call this function");
@@ -345,7 +346,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         string[] memory _shortDescriptions,
         string[] memory _hashOfDetails,
         address[][] memory _skillVerifiedAddresses
-    ) external onlyDAO {
+    ) external  {
         require(_names.length == _members.length && 
                 _names.length == _shortDescriptions.length &&
                 _names.length == _hashOfDetails.length &&
@@ -532,32 +533,35 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     }
     
     // Function to finalize dispute - can be called by anyone
-    function finalizeDispute(string memory _disputeId) external {
-        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
-        
-        Dispute storage dispute = disputes[_disputeId];
-        require(dispute.isVotingActive, "Voting is not active for this dispute");
-        require(!dispute.isFinalized, "Dispute already finalized");
-        require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
-        
-        // Finalize the dispute
-        dispute.isVotingActive = false;
-        dispute.isFinalized = true;
-        dispute.result = dispute.votesFor > dispute.votesAgainst;
-        
-        // Notify AthenaClient about finalization using string disputeId
-        if (address(athenaClient) != address(0)) {
-            try athenaClient.finalizeDispute(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst) {
-                // Success
-            } catch Error(string memory reason) {
-                emit CrossContractCallFailed(msg.sender, string(abi.encodePacked("AthenaClient finalization failed: ", reason)));
-            } catch {
-                emit CrossContractCallFailed(msg.sender, "AthenaClient finalization failed: Unknown error");
-            }
-        }
-        
-        emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
-    }
+   // Function to finalize dispute - can be called by anyone
+function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
+    require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+    
+    Dispute storage dispute = disputes[_disputeId];
+    require(dispute.isVotingActive, "Voting is not active for this dispute");
+    require(!dispute.isFinalized, "Dispute already finalized");
+    require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
+    
+    // Finalize the dispute
+    dispute.isVotingActive = false;
+    dispute.isFinalized = true;
+    dispute.result = dispute.votesFor > dispute.votesAgainst;
+    
+    // Send cross-chain message to AthenaClient about finalization
+    uint32 athenaClientChainEid = 40231; // Arbitrum Sepolia
+    bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
+    
+    _lzSend(
+        athenaClientChainEid,
+        payload,
+        _athenaClientOptions,
+        MessagingFee(msg.value, 0),
+        payable(msg.sender)
+    );
+    
+    emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
+    emit CrossChainMessageSent("finalizeDispute", athenaClientChainEid, payload);
+}
     
     // ==================== QUOTE FUNCTIONS ====================
     
