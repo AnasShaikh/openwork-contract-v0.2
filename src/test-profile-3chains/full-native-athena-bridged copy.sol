@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
 import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
@@ -30,23 +29,28 @@ interface INativeOpenWorkJobContract {
     function jobExists(string memory _jobId) external view returns (bool);
 }
 
+// Interface to notify governance actions in Rewards Contract
+interface IRewardsContract {
+    function notifyGovernanceAction(address account) external;
+}
+
 // Interface to communicate with AthenaClient Contract
 interface IAthenaClient {
     function recordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external;
     function finalizeDispute(string memory disputeId, bool winningSide, uint256 totalVotingPowerFor, uint256 totalVotingPowerAgainst) external;
 }
 
-contract CrossChainNativeAthena is OAppReceiver, OAppSender {
+contract CrossChainNativeAthena is OAppReceiver {
     address public daoContract;
     
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
+    // Rewards Contract for governance action tracking
+    IRewardsContract public rewardsContract;
+    
     // AthenaClient Contract for fee distribution
     IAthenaClient public athenaClient;
-    
-    // Cross-chain settings
-    uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
     
     // Add this enum to define voting types
     enum VotingType {
@@ -117,16 +121,16 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     // Events
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
+    event RewardsContractUpdated(address indexed oldContract, address indexed newContract);
     event AthenaClientUpdated(address indexed oldContract, address indexed newContract);
     event EarnedTokensUsedForVoting(address indexed user, uint256 earnedTokens, string votingType);
+    event GovernanceActionNotified(address indexed user, string action);
     event CrossContractCallFailed(address indexed account, string reason);
     event DisputeFinalized(string indexed disputeId, bool winningSide, uint256 totalVotesFor, uint256 totalVotesAgainst);
     event DisputeRaised(string indexed jobId, address indexed disputeRaiser, uint256 fees);
     event SkillVerificationSubmitted(address indexed applicant, string targetOracleName, uint256 feeAmount);
     event AskAthenaSubmitted(address indexed applicant, string targetOracle, string fees);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
-    event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
-    event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
     
     modifier onlyDAO() {
         require(msg.sender == daoContract, "Only DAO can call this function");
@@ -135,17 +139,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     constructor(address _endpoint, address _owner, address _daoContract) OAppCore(_endpoint, _owner) Ownable(_owner) {
         daoContract = _daoContract;
-    }
-
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
-    }
-
-    // Override to change fee check from equivalency to < since batch fees are cumulative
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value < _nativeFee) revert("Insufficient native fee");
-        return _nativeFee;
     }
 
     // ==================== LAYERZERO MESSAGE HANDLING ====================
@@ -241,32 +234,30 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
     
+    function setRewardsContract(address _rewardsContract) external onlyOwner {
+        address oldContract = address(rewardsContract);
+        rewardsContract = IRewardsContract(_rewardsContract);
+        emit RewardsContractUpdated(oldContract, _rewardsContract);
+    }
+    
     function setAthenaClient(address _athenaClient) external onlyOwner {
         address oldContract = address(athenaClient);
         athenaClient = IAthenaClient(_athenaClient);
         emit AthenaClientUpdated(oldContract, _athenaClient);
     }
     
-    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
-        uint32 oldEid = rewardsChainEid;
-        rewardsChainEid = _rewardsChainEid;
-        emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
-    }
-    
     // ==================== HELPER FUNCTIONS ====================
     
-    function _notifyRewardsContract(address account, string memory actionType, bytes memory _options) private {
-        if (rewardsChainEid == 0) {
-            emit CrossContractCallFailed(account, "No rewards chain configured");
-            return;
+    function _notifyRewardsContract(address account, string memory actionType) private {
+        if (address(rewardsContract) != address(0)) {
+            try rewardsContract.notifyGovernanceAction(account) {
+                emit GovernanceActionNotified(account, actionType);
+            } catch Error(string memory reason) {
+                emit CrossContractCallFailed(account, string(abi.encodePacked("Rewards notification failed: ", reason)));
+            } catch {
+                emit CrossContractCallFailed(account, "Rewards notification failed: Unknown error");
+            }
         }
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        MessagingFee memory fee = _quote(rewardsChainEid, payload, _options, false);
-        
-        _lzSend(rewardsChainEid, payload, _options, fee, payable(msg.sender));
-        
-        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, fee.nativeFee);
     }
     
     function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) private {
@@ -438,7 +429,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     // ==================== VOTING FUNCTIONS ====================
     
-    function vote(VotingType _votingType, string memory _disputeId, bool _voteFor, address _claimAddress, bytes calldata _options) external payable {
+    function vote(VotingType _votingType, string memory _disputeId, bool _voteFor, address _claimAddress) external {
         // Check if user can vote (has sufficient stake OR earned tokens)
         require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
         require(_claimAddress != address(0), "Claim address cannot be zero");
@@ -450,7 +441,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         // Notify rewards contract about governance action
         string memory votingTypeStr = _votingType == VotingType.Dispute ? "dispute_vote" : 
                                      _votingType == VotingType.SkillVerification ? "skill_verification_vote" : "ask_athena_vote";
-        _notifyRewardsContract(msg.sender, votingTypeStr, _options);
+        _notifyRewardsContract(msg.sender, votingTypeStr);
         
         // Emit event if user is using earned tokens (no active stake above threshold)
         (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
@@ -465,69 +456,60 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             }
         }
         
-        // Route to appropriate voting function
         if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight);
+            require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+            require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
+            
+            Dispute storage dispute = disputes[_disputeId];
+            require(dispute.isVotingActive, "Voting is not active for this dispute");
+            require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnDispute[_disputeId][msg.sender] = true;
+            
+            if (_voteFor) {
+                dispute.votesFor += voteWeight;
+            } else {
+                dispute.votesAgainst += voteWeight;
+            }
+            
+            // Notify AthenaClient about the vote for fee distribution
+            _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            
         } else if (_votingType == VotingType.SkillVerification) {
-            _voteOnSkillVerification(_disputeId, _voteFor, voteWeight);
+            // Convert disputeId to uint for skill verification (assuming it's passed as string number)
+            uint256 applicationId = stringToUint(_disputeId);
+            require(applicationId < applicationCounter, "Application does not exist");
+            require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
+            
+            SkillVerificationApplication storage application = skillApplications[applicationId];
+            require(application.isVotingActive, "Voting is not active for this application");
+            require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnSkillApplication[applicationId][msg.sender] = true;
+            
+            if (_voteFor) {
+                application.votesFor += voteWeight;
+            } else {
+                application.votesAgainst += voteWeight;
+            }
+            
         } else if (_votingType == VotingType.AskAthena) {
-            _voteOnAskAthena(_disputeId, _voteFor, voteWeight);
-        }
-    }
-    
-    function _voteOnDispute(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight) internal {
-        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
-        require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
-        
-        Dispute storage dispute = disputes[_disputeId];
-        require(dispute.isVotingActive, "Voting is not active for this dispute");
-        require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        hasVotedOnDispute[_disputeId][msg.sender] = true;
-        
-        if (_voteFor) {
-            dispute.votesFor += voteWeight;
-        } else {
-            dispute.votesAgainst += voteWeight;
-        }
-        
-        // Notify AthenaClient about the vote for fee distribution
-        _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-    }
-    
-    function _voteOnSkillVerification(string memory _disputeId, bool _voteFor, uint256 voteWeight) internal {
-        uint256 applicationId = stringToUint(_disputeId);
-        require(applicationId < applicationCounter, "Application does not exist");
-        require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
-        
-        SkillVerificationApplication storage application = skillApplications[applicationId];
-        require(application.isVotingActive, "Voting is not active for this application");
-        require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        hasVotedOnSkillApplication[applicationId][msg.sender] = true;
-        
-        if (_voteFor) {
-            application.votesFor += voteWeight;
-        } else {
-            application.votesAgainst += voteWeight;
-        }
-    }
-    
-    function _voteOnAskAthena(string memory _disputeId, bool _voteFor, uint256 voteWeight) internal {
-        uint256 athenaId = stringToUint(_disputeId);
-        require(athenaId < askAthenaCounter, "AskAthena application does not exist");
-        require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
-        
-        AskAthenaApplication storage athenaApp = askAthenaApplications[athenaId];
-        require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
-        require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        hasVotedOnAskAthena[athenaId][msg.sender] = true;
-        
-        if (_voteFor) {
-            athenaApp.votesFor += voteWeight;
-        } else {
-            athenaApp.votesAgainst += voteWeight;
+            // Convert disputeId to uint for ask athena (assuming it's passed as string number)
+            uint256 athenaId = stringToUint(_disputeId);
+            require(athenaId < askAthenaCounter, "AskAthena application does not exist");
+            require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
+            
+            AskAthenaApplication storage athenaApp = askAthenaApplications[athenaId];
+            require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
+            require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            hasVotedOnAskAthena[athenaId][msg.sender] = true;
+            
+            if (_voteFor) {
+                athenaApp.votesFor += voteWeight;
+            } else {
+                athenaApp.votesAgainst += voteWeight;
+            }
         }
     }
     
@@ -559,19 +541,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
     }
     
-    // ==================== QUOTE FUNCTIONS ====================
-    
-    function quoteGovernanceNotification(
-        address account,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        if (rewardsChainEid == 0) return 0;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
     // ==================== UTILITY FUNCTIONS ====================
     
     function stringToUint(string memory s) internal pure returns (uint256) {
@@ -587,10 +556,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     function updateMinOracleMembers(uint256 _newMinMembers) external onlyDAO {
         minOracleMembers = _newMinMembers;
-    }
-    
-    function getRewardsChainEid() external view returns (uint32) {
-        return rewardsChainEid;
     }
     
     // ==================== VIEW FUNCTIONS ====================

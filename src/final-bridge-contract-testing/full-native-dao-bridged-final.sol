@@ -461,8 +461,8 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         }
         
         // Use default options when called from Governor base functions
-        bytes memory defaultOptions = "0x0003010011010000000000000000000000000007a120";
-        _incrementGovernanceActions(account, "vote", defaultOptions);
+       // bytes memory defaultOptions = "0x0003010011010000000000000000000000000007a120";
+        //_incrementGovernanceActions(account, "vote", defaultOptions);
         
         return super._castVote(proposalId, account, support, reason, params);
     }
