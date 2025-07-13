@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/IGovernor.sol";
 import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
+import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
 import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
@@ -16,25 +17,20 @@ interface INativeOpenWorkJobContract {
     function getUserRewardInfo(address user) external view returns (uint256 cumulativeEarnings, uint256 totalTokens);
 }
 
-// Interface to notify governance actions via Native Athena
-interface INativeAthena {
-    function notifyGovernanceActionFromNativeDAO(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
-    ) external payable;
-    function quoteNativeDAOGovernanceForwarding(
-        address account,
-        bytes calldata _rewardsOptions
-    ) external view returns (uint256 fee);
+// Interface to notify governance actions in Rewards Contract
+interface IRewardsContract {
+    function notifyGovernanceAction(address account) external;
 }
 
-contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OAppReceiver {
+contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OAppReceiver, OAppSender {
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
-    // Native Athena for governance action forwarding
-    INativeAthena public nativeAthena;
+    // Rewards Contract for governance action tracking (local reference for fallback)
+    IRewardsContract public rewardsContract;
+    
+    // Cross-chain settings
+    uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
     
     // Governance parameters (same as main contract)
     uint256 public proposalStakeThreshold = 100 * 10**18;
@@ -74,12 +70,14 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     event CrossContractCallFailed(address indexed account, string reason);
     event CrossContractCallSuccess(address indexed account);
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
-    event NativeAthenaUpdated(address indexed oldContract, address indexed newContract);
+    event RewardsContractUpdated(address indexed oldContract, address indexed newContract);
     event EarnedTokensUsedForGovernance(address indexed user, uint256 earnedTokens, string action);
     event GovernanceActionNotified(address indexed user, string action);
-    event GovernanceActionSentToAthena(address indexed user, string action, uint256 fee);
+    event GovernanceActionIncremented(address indexed user, string action);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
+    event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
     event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
+    event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
     
     constructor(address _endpoint, address _owner) 
         Governor("CrossChainNativeDAO")
@@ -91,6 +89,17 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         OAppCore(_endpoint, _owner)
         Ownable(_owner)
     {}
+
+    // Override the conflicting oAppVersion function
+    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
+        return (1, 1);
+    }
+
+    // Override to change fee check from equivalency to < since batch fees are cumulative
+    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
+        if (msg.value < _nativeFee) revert("Insufficient native fee");
+        return _nativeFee;
+    }
 
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
@@ -146,64 +155,69 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
     
-    function setNativeAthena(address _nativeAthena) external onlyOwner {
-        address oldContract = address(nativeAthena);
-        nativeAthena = INativeAthena(_nativeAthena);
-        emit NativeAthenaUpdated(oldContract, _nativeAthena);
+    function setRewardsContract(address _rewardsContract) external onlyOwner {
+        address oldContract = address(rewardsContract);
+        rewardsContract = IRewardsContract(_rewardsContract);
+        emit RewardsContractUpdated(oldContract, _rewardsContract);
     }
     
-    // ==================== LOCAL INTERFACE FOR NATIVE ATHENA ====================
-    
-    /**
-     * @notice Function for Native Athena to call (if needed for future functionality)
-     * @param account Address of the user
-     */
-    function notifyGovernanceActionFromAthena(address account) external {
-        require(msg.sender == address(nativeAthena), "Only Native Athena can call this");
-        
-        // For now, just emit event - can be extended in future
-        emit GovernanceActionNotified(account, "athena_action");
+    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
+        uint32 oldEid = rewardsChainEid;
+        rewardsChainEid = _rewardsChainEid;
+        emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
     }
     
-    // ==================== CROSS-CHAIN MESSAGING VIA NATIVE ATHENA ====================
+    // ==================== CROSS-CHAIN MESSAGING ====================
     
-    /**
-     * @notice Send governance notification via Native Athena
-     * @param account Address of the user who performed governance action
-     * @param actionType Type of governance action
-     * @param _options LayerZero options for the message
-     */
-    function _sendGovernanceNotificationViaAthena(
+    function _sendGovernanceNotificationCrossChain(
         address account, 
         string memory actionType,
-        bytes memory _options
+        bytes memory _rewardsOptions
     ) internal {
-        if (address(nativeAthena) == address(0)) {
-            emit CrossContractCallFailed(account, "Native Athena not set");
+        if (rewardsChainEid == 0) {
+            // Fallback to local rewards contract if no cross-chain setup
+            _notifyRewardsContractLocal(account, actionType);
             return;
         }
         
-        // Get fee quote from Native Athena
-        uint256 fee = 0;
-        try nativeAthena.quoteNativeDAOGovernanceForwarding(account, _options) returns (uint256 quotedFee) {
-            fee = quotedFee;
-        } catch {
-            emit CrossContractCallFailed(account, "Failed to quote governance forwarding fee");
-            return;
-        }
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
         
-        // Send via Native Athena if fee is available
-        if (fee > 0 && address(this).balance >= fee) {
-            try nativeAthena.notifyGovernanceActionFromNativeDAO{value: fee}(account, actionType, _options) {
-                emit GovernanceActionSentToAthena(account, actionType, fee);
+        MessagingFee memory fee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
+        
+        _lzSend(
+            rewardsChainEid,
+            payload,
+            _rewardsOptions,
+            fee,
+            payable(msg.sender)
+        );
+        
+        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, fee.nativeFee);
+    }
+    
+    // ==================== HELPER FUNCTIONS ====================
+    
+    function _notifyRewardsContractLocal(address account, string memory actionType) private {
+        if (address(rewardsContract) != address(0)) {
+            try rewardsContract.notifyGovernanceAction(account) {
+                emit GovernanceActionNotified(account, actionType);
+            } catch Error(string memory reason) {
+                emit CrossContractCallFailed(account, string(abi.encodePacked("Local rewards notification failed: ", reason)));
             } catch {
-                emit CrossContractCallFailed(account, "Failed to send governance action to Athena");
+                emit CrossContractCallFailed(account, "Local rewards notification failed: Unknown error");
             }
-        } else {
-            emit CrossContractCallFailed(account, "Insufficient balance for governance forwarding");
         }
     }
     
+    // Modified to accept user-provided options
+    function _incrementGovernanceActions(address account, string memory actionType, bytes memory _options) private {
+        // Send cross-chain notification to rewards contract with user-provided options
+        _sendGovernanceNotificationCrossChain(account, actionType, _options);
+        
+        // Emit local event
+        emit GovernanceActionIncremented(account, actionType);
+    }
+
     // ==================== GOVERNANCE ELIGIBILITY CHECK FUNCTIONS ====================
     
     function _hasGovernanceEligibility(address account, uint256 stakeThreshold, uint256 rewardThreshold) internal view returns (bool) {
@@ -375,6 +389,10 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         return (proposalStakeThreshold, votingStakeThreshold, proposalRewardThreshold, votingRewardThreshold);
     }
     
+    function getRewardsChainEid() external view returns (uint32) {
+        return rewardsChainEid;
+    }
+    
     // ==================== GOVERNOR REQUIRED FUNCTIONS ====================
     
     function _getVotes(address account, uint256, bytes memory) internal view override returns (uint256) {
@@ -401,7 +419,7 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     
     // ==================== MODIFIED VOTING FUNCTIONS ====================
     
-    // New function with user-provided options for cross-chain governance notifications
+    // New function with user-provided options
     function castVoteWithOptions(
         uint256 proposalId, 
         uint8 support, 
@@ -420,13 +438,13 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
             }
         }
         
-        // Send governance notification via Native Athena
-        _sendGovernanceNotificationViaAthena(msg.sender, "vote", _options);
+        // Increment governance actions for voting with user-provided options
+        _incrementGovernanceActions(msg.sender, "vote", _options);
         
         return _castVote(proposalId, msg.sender, support, reason, "");
     }
     
-    // Modified original _castVote to use default behavior when called from Governor
+    // Modified original _castVote to use default options when called from Governor
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason, bytes memory params)
         internal override returns (uint256) {
         
@@ -442,10 +460,14 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
             }
         }
         
+        // Use default options when called from Governor base functions
+       // bytes memory defaultOptions = "0x0003010011010000000000000000000000000007a120";
+        //_incrementGovernanceActions(account, "vote", defaultOptions);
+        
         return super._castVote(proposalId, account, support, reason, params);
     }
     
-    // New function with user-provided options for cross-chain governance notifications
+    // New function with user-provided options
     function proposeWithOptions(
         address[] memory targets, 
         uint256[] memory values, 
@@ -466,15 +488,15 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
             }
         }
         
-        // Send governance notification via Native Athena
-        _sendGovernanceNotificationViaAthena(msg.sender, "propose", _options);
+        // Increment governance actions for proposing with user-provided options
+        _incrementGovernanceActions(msg.sender, "propose", _options);
         
         uint256 proposalId = super.propose(targets, values, calldatas, description);
         proposalIds.push(proposalId);
         return proposalId;
     }
     
-    // Modified original propose to use default behavior
+    // Modified original propose to use default options
     function propose(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description)
         public override returns (uint256) {
         
@@ -489,6 +511,10 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
                 }
             }
         }
+        
+        // Use default options when called from Governor base functions
+        bytes memory defaultOptions = "0x0003010011010000000000000000000000000007a120";
+        _incrementGovernanceActions(msg.sender, "propose", defaultOptions);
         
         uint256 proposalId = super.propose(targets, values, calldatas, description);
         proposalIds.push(proposalId);
@@ -554,9 +580,11 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         address account,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        if (address(nativeAthena) == address(0)) return 0;
+        if (rewardsChainEid == 0) return 0;
         
-        return nativeAthena.quoteNativeDAOGovernanceForwarding(account, _options);
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
+        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _options, false);
+        return msgFee.nativeFee;
     }
     
     // ==================== ADMIN FUNCTIONS ====================
@@ -580,15 +608,4 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         votingRewardThreshold = newThreshold;
         emit RewardThresholdUpdated("votingReward", newThreshold);
     }
-    
-    // ==================== EMERGENCY FUNCTIONS ====================
-    
-    function withdraw() external onlyOwner {
-        uint256 balance = address(this).balance;
-        require(balance > 0, "No balance to withdraw");
-        payable(owner()).transfer(balance);
-    }
-    
-    // Allow contract to receive ETH for paying LayerZero fees
-    receive() external payable override {}
 }

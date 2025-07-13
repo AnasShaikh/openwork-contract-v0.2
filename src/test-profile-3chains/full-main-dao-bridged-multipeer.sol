@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/IGovernor.sol";
+import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
+import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
@@ -20,29 +22,16 @@ interface IRewardsContract {
         uint256 cumulativeEarnings,
         uint256 totalJobTokens
     );
-    function sendStakeUpdateCrossChain(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
-        bytes calldata _options
-    ) external payable;
-    function quoteStakeUpdate(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
-        bytes calldata _options
-    ) external view returns (uint256 fee);
 }
 
-contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable, ReentrancyGuard {
+contract CrossChainMainDAO is Governor, GovernorSettings, GovernorCountingSimple, OAppSender, ReentrancyGuard {
     IERC20 public openworkToken;
     IRewardsContract public rewardsContract;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     uint32 public immutable chainId;
+    
+    // Chain endpoints for cross-chain communication
+    uint32 public nativeChainEid;     // Chain where Native DAO is deployed
     
     // Governance parameters (updatable)
     uint256 public proposalStakeThreshold = 100 * 10**18;
@@ -85,13 +74,15 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
     event RewardsContractUpdated(address indexed newRewardsContract);
     event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
-    event StakeDataSentCrossChain(address indexed staker, bool isActive, uint256 fee);
-    event StakeDataReceivedFromRewards(address indexed staker, uint256 amount, bool isActive);
+    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload, uint256 fee);
+    event NativeChainUpdated(uint32 newChainEid);
     
     constructor(
+        address _endpoint,
         address _owner,
         address _openworkToken,
-        uint32 _chainId
+        uint32 _chainId,
+        uint32 _nativeChainEid
     ) 
         Governor("OpenWorkDAO")
         GovernorSettings(
@@ -99,13 +90,26 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
             5 minutes,
             100 * 10**18
         )
+        OAppCore(_endpoint, _owner)
         Ownable(_owner)
     {
         openworkToken = IERC20(_openworkToken);
         chainId = _chainId;
+        nativeChainEid = _nativeChainEid;
+    }
+    
+    // Override to change fee check from equivalency to < since batch fees are cumulative
+    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
+        if (msg.value < _nativeFee) revert("Insufficient native fee");
+        return _nativeFee;
     }
     
     // ==================== ADMIN FUNCTIONS ====================
+    
+    function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
+        nativeChainEid = _nativeChainEid;
+        emit NativeChainUpdated(_nativeChainEid);
+    }
     
     function setRewardsContract(address _rewardsContract) external onlyOwner {
         require(_rewardsContract != address(0), "Invalid rewards contract address");
@@ -113,82 +117,37 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         emit RewardsContractUpdated(_rewardsContract);
     }
     
-    // ==================== LOCAL INTERFACE FOR REWARDS CONTRACT ====================
+    // ==================== CROSS-CHAIN MESSAGING ====================
     
-    /**
-     * @notice Function for Rewards Contract to update stake data (called locally)
-     * @param staker Address of the staker
-     * @param amount Stake amount
-     * @param unlockTime When stake unlocks
-     * @param durationMinutes Stake duration
-     * @param isActive Whether stake is active
-     */
-    function updateStakeDataFromRewards(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive
-    ) external {
-        require(msg.sender == address(rewardsContract), "Only Rewards Contract can call this");
-        
-        stakes[staker] = Stake({
-            amount: amount,
-            unlockTime: unlockTime,
-            durationMinutes: durationMinutes
-        });
-        
-        // Update staker tracking
-        if (isActive && !isStaker[staker]) {
-            allStakers.push(staker);
-            isStaker[staker] = true;
-        } else if (!isActive && isStaker[staker]) {
-            isStaker[staker] = false;
-        }
-        
-        emit StakeDataReceivedFromRewards(staker, amount, isActive);
-    }
-    
-    // ==================== CROSS-CHAIN MESSAGING VIA REWARDS CONTRACT ====================
-    
-    /**
-     * @notice Send stake data cross-chain via Rewards Contract
-     * @param staker Address of the staker
-     * @param isActive Whether stake is active
-     * @param _options LayerZero options for the message
-     */
     function _sendStakeDataCrossChain(
         address staker, 
         bool isActive,
-        bytes memory _options
+        bytes memory _nativeOptions
     ) internal {
-        if (address(rewardsContract) == address(0)) return;
+        if (nativeChainEid == 0) return;
         
         Stake memory userStake = stakes[staker];
         
-        // Get fee quote from Rewards Contract
-        uint256 fee = rewardsContract.quoteStakeUpdate(
-            staker,
-            userStake.amount,
-            userStake.unlockTime,
-            userStake.durationMinutes,
-            isActive,
-            _options
+        bytes memory payload = abi.encode(
+            "updateStakeData", 
+            staker, 
+            userStake.amount, 
+            userStake.unlockTime, 
+            userStake.durationMinutes, 
+            isActive
         );
         
-        // Send via Rewards Contract
-        if (fee > 0) {
-            rewardsContract.sendStakeUpdateCrossChain{value: fee}(
-                staker,
-                userStake.amount,
-                userStake.unlockTime,
-                userStake.durationMinutes,
-                isActive,
-                _options
-            );
-            
-            emit StakeDataSentCrossChain(staker, isActive, fee);
-        }
+        MessagingFee memory fee = _quote(nativeChainEid, payload, _nativeOptions, false);
+        
+        _lzSend(
+            nativeChainEid,
+            payload,
+            _nativeOptions,
+            fee,
+            payable(msg.sender)
+        );
+        
+        emit CrossChainMessageSent("updateStakeData", nativeChainEid, payload, fee.nativeFee);
     }
     
     // ==================== GOVERNANCE ELIGIBILITY ====================
@@ -222,7 +181,7 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     function stake(
         uint256 amount, 
         uint256 durationMinutes,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(amount >= MIN_STAKE, "Minimum stake is 100 tokens");
         require(durationMinutes >= 1 && durationMinutes <= 3, "Duration must be 1-3 minutes");
@@ -243,11 +202,11 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         
         emit StakeCreated(msg.sender, amount, durationMinutes);
         
-        // Send stake data cross-chain via Rewards Contract
-        _sendStakeDataCrossChain(msg.sender, true, _options);
+        // Send stake data cross-chain
+        _sendStakeDataCrossChain(msg.sender, true, _nativeOptions);
     }
     
-    function unstake(bytes calldata _options) external payable nonReentrant {
+    function unstake(bytes calldata _nativeOptions) external payable nonReentrant {
         Stake memory userStake = stakes[msg.sender];
         require(userStake.amount > 0, "No stake found");
         require(block.timestamp >= userStake.unlockTime, "Stake still locked");
@@ -271,15 +230,15 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
             
             emit UnstakeCompleted(msg.sender, stakeAmount);
             
-            // Send updated stake data (inactive) cross-chain via Rewards Contract
-            _sendStakeDataCrossChain(msg.sender, false, _options);
+            // Send updated stake data (inactive) cross-chain
+            _sendStakeDataCrossChain(msg.sender, false, _nativeOptions);
         }
     }
     
     function removeStake(
         address staker, 
         uint256 removeAmount,
-        bytes calldata _options
+        bytes calldata _nativeOptions
     ) external payable onlyGovernance nonReentrant {
         require(stakes[staker].amount > 0, "No stake found");
         require(removeAmount <= stakes[staker].amount, "Remove amount exceeds stake");
@@ -294,8 +253,8 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         
         emit StakeRemoved(staker, removeAmount);
         
-        // Send updated stake data cross-chain via Rewards Contract
-        _sendStakeDataCrossChain(staker, isActive, _options);
+        // Send updated stake data cross-chain
+        _sendStakeDataCrossChain(staker, isActive, _nativeOptions);
     }
     
     // ==================== DELEGATION FUNCTIONS ====================
@@ -379,6 +338,10 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         
         canPropose = _hasGovernanceEligibility(account, proposalStakeThreshold, proposalRewardThreshold);
         canVote = _hasGovernanceEligibility(account, votingStakeThreshold, votingRewardThreshold);
+    }
+    
+    function getNativeChainEid() external view returns (uint32) {
+        return nativeChainEid;
     }
     
     // ==================== GOVERNANCE FUNCTIONS ====================
@@ -488,22 +451,30 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     
     // ==================== QUOTE FUNCTIONS ====================
     
+    function quoteSingleChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        MessagingFee memory msgFee = _quote(nativeChainEid, _payload, _options, false);
+        return msgFee.nativeFee;
+    }
+    
     function quoteStakeUpdate(
         address staker,
         bool isActive,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        if (address(rewardsContract) == address(0)) return 0;
-        
         Stake memory userStake = stakes[staker];
-        return rewardsContract.quoteStakeUpdate(
-            staker,
-            userStake.amount,
-            userStake.unlockTime,
-            userStake.durationMinutes,
-            isActive,
-            _options
+        bytes memory payload = abi.encode(
+            "updateStakeData", 
+            staker, 
+            userStake.amount, 
+            userStake.unlockTime, 
+            userStake.durationMinutes, 
+            isActive
         );
+        MessagingFee memory msgFee = _quote(nativeChainEid, payload, _options, false);
+        return msgFee.nativeFee;
     }
     
     // ==================== GOVERNANCE ADMIN FUNCTIONS ====================

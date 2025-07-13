@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
 import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
@@ -14,16 +13,10 @@ interface IERC20 {
 }
 
 interface IMainDAO {
-    function updateStakeDataFromRewards(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive
-    ) external;
+    function getEarner(address earnerAddress) external view returns (address, uint256, uint256, uint256);
 }
 
-contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard {
+contract CrossChainRewardsContract is OAppReceiver, ReentrancyGuard {
     IERC20 public openworkToken;
     IMainDAO public mainDAO;
     
@@ -54,6 +47,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     
     // Job tracking
     uint256 public currentTotalPlatformPayments;
+    address public mainDAOContract;
     
     // Reward bands arrays
     RewardBand[] public rewardBands;
@@ -62,9 +56,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     // Cross-chain tracking
     mapping(uint32 => bool) public authorizedChains;
     mapping(uint32 => string) public chainNames;
-    
-    // NEW: Chain endpoints for hub functionality
-    uint32 public nativeChainEid;     // Chain where Native Athena is deployed (Optimism)
     
     // Events
     event ProfileCreated(address indexed user, address indexed referrer, uint32 indexed sourceChain);
@@ -89,25 +80,12 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     event ContractUpdated(string contractType, address newAddress);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized, string chainName);
-    event StakeDataForwarded(address indexed staker, bool isActive);
-    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
     
     constructor(address _endpoint, address _owner, address _openworkToken) OAppCore(_endpoint, _owner) Ownable(_owner) {
         openworkToken = IERC20(_openworkToken);
         _initializeRewardBands();
         _initializeGovernanceRewardBands();
         _initializeAuthorizedChains();
-    }
-
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
-    }
-
-    // Override to change fee check from equivalency to < since batch fees are cumulative
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value < _nativeFee) revert("Insufficient native fee");
-        return _nativeFee;
     }
 
     // ==================== LAYERZERO MESSAGE HANDLING ====================
@@ -136,9 +114,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
             _handleUpdateRewardsOnPayment(_message, _origin.srcEid);
         } else if (keccak256(bytes(functionName)) == keccak256("notifyGovernanceAction")) {
             _handleGovernanceActionNotification(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256("updateStakeData")) {
-            // NEW: Handle stake updates and forward to Main DAO
-            _handleStakeDataUpdate(_message, _origin.srcEid);
         } else {
             revert("Unknown function");
         }
@@ -164,22 +139,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         emit CrossChainMessageReceived("notifyGovernanceAction", _sourceChain, _message);
     }
     
-    // NEW: Handle stake updates and forward to Main DAO
-    function _handleStakeDataUpdate(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
-        
-        // Forward to Main DAO locally
-        if (address(mainDAO) != address(0)) {
-            try mainDAO.updateStakeDataFromRewards(staker, amount, unlockTime, durationMinutes, isActive) {
-                emit StakeDataForwarded(staker, isActive);
-            } catch {
-                // Log error but don't revert to avoid blocking other messages
-            }
-        }
-        
-        emit CrossChainMessageReceived("updateStakeData", _sourceChain, _message);
-    }
-    
     // ==================== CROSS-CHAIN SETUP FUNCTIONS ====================
     
     function _initializeAuthorizedChains() private {
@@ -201,16 +160,19 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         emit AuthorizedChainUpdated(_chainEid, _authorized, _chainName);
     }
     
-    // NEW: Set Native Chain EID for sending stake updates
-    function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
-        nativeChainEid = _nativeChainEid;
-    }
-    
     // CONTRACT SETUP FUNCTIONS
     
     function setOpenworkToken(address _token) external onlyOwner {
         openworkToken = IERC20(_token);
         emit ContractUpdated("OpenworkToken", _token);
+    }
+
+    //
+
+    // Add this modifier after the existing contract declarations
+    modifier onlyMainDAO() {
+        require(msg.sender == mainDAOContract, "Only Main DAO can call this function");
+        _;
     }
     
     function setMainDAO(address _mainDAO) external onlyOwner {
@@ -264,7 +226,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         governanceRewardBands.push(GovernanceRewardBand(8192000 * 1e18, 16384000 * 1e18, 3 * 1e18));
         governanceRewardBands.push(GovernanceRewardBand(16384000 * 1e18, 32768000 * 1e18, 15 * 1e17));
         governanceRewardBands.push(GovernanceRewardBand(32768000 * 1e18, 65536000 * 1e18, 75 * 1e16));
-        governanceRewardBands.push(GovernanceRewardBand(65536000 * 1e18, 131072000 * 1e6, 38 * 1e16));
+        governanceRewardBands.push(GovernanceRewardBand(65536000 * 1e18, 131072000 * 1e18, 38 * 1e16));
         governanceRewardBands.push(GovernanceRewardBand(131072000 * 1e18, 262144000 * 1e18, 19 * 1e16));
     }
     
@@ -447,38 +409,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         
         emit GovernanceRewardsClaimed(msg.sender, claimableAmount);
     }
-
-    // NEW: Function for Main DAO to send stake updates cross-chain
-    function sendStakeUpdateCrossChain(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
-        bytes calldata _options
-    ) external payable {
-        require(msg.sender == address(mainDAO), "Only Main DAO can send stake updates");
-        require(nativeChainEid != 0, "Native chain EID not set");
-        
-        bytes memory payload = abi.encode(
-            "updateStakeData",
-            staker,
-            amount,
-            unlockTime,
-            durationMinutes,
-            isActive
-        );
-        
-        _lzSend(
-            nativeChainEid,
-            payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent("updateStakeData", nativeChainEid, payload);
-    }
     
     // VIEW FUNCTIONS
     
@@ -591,33 +521,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     
     function getChainName(uint32 chainEid) external view returns (string memory) {
         return chainNames[chainEid];
-    }
-    
-    function getNativeChainEid() external view returns (uint32) {
-        return nativeChainEid;
-    }
-    
-    // NEW: Quote function for stake updates
-    function quoteStakeUpdate(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        if (nativeChainEid == 0) return 0;
-        
-        bytes memory payload = abi.encode(
-            "updateStakeData",
-            staker,
-            amount,
-            unlockTime,
-            durationMinutes,
-            isActive
-        );
-        MessagingFee memory msgFee = _quote(nativeChainEid, payload, _options, false);
-        return msgFee.nativeFee;
     }
     
     // ADMIN FUNCTIONS

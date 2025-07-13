@@ -7,10 +7,9 @@ import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-// Interface to get staker info from Native DAO (now local)
+// Interface to get staker info from Native DAO
 interface INativeDAO {
     function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive);
-    function notifyGovernanceActionFromAthena(address account) external;
 }
 
 // Interface to get earned tokens and job details from Native OpenWork Job Contract
@@ -31,13 +30,13 @@ interface INativeOpenWorkJobContract {
     function jobExists(string memory _jobId) external view returns (bool);
 }
 
-contract NativeAthena is OAppReceiver, OAppSender {
+contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     address public daoContract;
     
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
-    // Cross-chain settings - UPDATED: Only need to communicate with Rewards and Athena Client
+    // Cross-chain settings
     uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
     uint32 public athenaClientChainEid = 40231; // Arbitrum Sepolia by default
     
@@ -121,8 +120,6 @@ contract NativeAthena is OAppReceiver, OAppSender {
     event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
     event AthenaClientChainEidUpdated(uint32 oldEid, uint32 newEid);
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
-    event GovernanceActionReceivedFromNativeDAO(address indexed user, string action);
-    event GovernanceActionForwardedToRewards(address indexed user, string action, uint256 fee);
     
     modifier onlyDAO() {
         require(msg.sender == daoContract, "Only DAO can call this function");
@@ -227,56 +224,6 @@ contract NativeAthena is OAppReceiver, OAppSender {
         askAthenaCounter++;
         
         emit AskAthenaSubmitted(applicant, targetOracle, fees);
-    }
-    
-    // ==================== LOCAL INTERFACE FOR NATIVE DAO ====================
-    
-    /**
-     * @notice Function for Native DAO to notify governance actions (called locally)
-     * @param account Address of the user who performed governance action
-     * @param actionType Type of governance action (propose, vote, etc.)
-     * @param _rewardsOptions LayerZero options for sending to Rewards Contract
-     */
-    function notifyGovernanceActionFromNativeDAO(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
-    ) external payable {
-        require(msg.sender == daoContract, "Only Native DAO can call this");
-        
-        emit GovernanceActionReceivedFromNativeDAO(account, actionType);
-        
-        // Forward to Rewards Contract on Ethereum
-        _sendGovernanceNotificationToRewards(account, actionType, _rewardsOptions);
-    }
-    
-    /**
-     * @notice Send governance notification to Rewards Contract
-     * @param account Address of the user
-     * @param actionType Type of action
-     * @param _rewardsOptions LayerZero options
-     */
-    function _sendGovernanceNotificationToRewards(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
-    ) internal {
-        if (rewardsChainEid == 0) return;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        
-        MessagingFee memory fee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
-        
-        _lzSend(
-            rewardsChainEid,
-            payload,
-            _rewardsOptions,
-            fee,
-            payable(msg.sender)
-        );
-        
-        emit GovernanceActionForwardedToRewards(account, actionType, fee.nativeFee);
-        emit CrossChainMessageSent("notifyGovernanceAction", rewardsChainEid, payload);
     }
     
     // ==================== CONTRACT SETUP FUNCTIONS ====================
@@ -472,7 +419,10 @@ contract NativeAthena is OAppReceiver, OAppSender {
         uint256 voteWeight = getUserVotingPower(msg.sender);
         require(voteWeight > 0, "No voting power");
         
-        // Calculate fees for cross-chain calls upfront
+        // Calculate fees for both cross-chain calls upfront
+        string memory votingTypeStr = _votingType == VotingType.Dispute ? "dispute_vote" : 
+                                     _votingType == VotingType.SkillVerification ? "skill_verification_vote" : "ask_athena_vote";
+        
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
         MessagingFee memory rewardsFee = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
         uint256 rewardsFeeCost = rewardsFee.nativeFee;
@@ -485,7 +435,7 @@ contract NativeAthena is OAppReceiver, OAppSender {
         uint256 totalFeeCost = rewardsFeeCost + athenaClientFeeCost;
         require(msg.value >= totalFeeCost, "Insufficient fee provided");
         
-        // Send to rewards contract first (governance notification)
+        // Send to rewards contract first
         if (rewardsChainEid != 0) {
             _lzSend(
                 rewardsChainEid,
@@ -684,17 +634,6 @@ contract NativeAthena is OAppReceiver, OAppSender {
         }
         
         totalFee = rewardsFee + athenaClientFee;
-    }
-    
-    function quoteNativeDAOGovernanceForwarding(
-        address account,
-        bytes calldata _rewardsOptions
-    ) external view returns (uint256 fee) {
-        if (rewardsChainEid == 0) return 0;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
-        return msgFee.nativeFee;
     }
     
     // ==================== UTILITY FUNCTIONS ====================

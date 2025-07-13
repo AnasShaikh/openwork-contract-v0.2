@@ -128,7 +128,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     
     // ==================== MESSAGE HANDLERS ====================
     
-    function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
+function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
     require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
     require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
     
@@ -144,6 +144,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
             for (uint256 i = 0; i < dispute.votes.length; i++) {
                 VoteRecord memory vote = dispute.votes[i];
                 
+                // Only winning voters get fees
                 if (vote.voteFor == winningSide) {
                     uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
                     claimableAmount[disputeId][vote.claimAddress] += voterShare;
@@ -152,10 +153,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
         }
     }
     
-    // AUTO-RESOLVE THE DISPUTE IN LOWJC
-    if (address(jobContract) != address(0)) {
-        jobContract.resolveDispute(disputeId, winningSide);
-    }
+
     
     emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
 }
