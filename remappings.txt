@@ -4,6 +4,7 @@
 @layerzerolabs/oapp-evm/=lib/LayerZero-v2/packages/layerzero-v2/evm/oapp/
 @layerzerolabs/devtools/=lib/devtools/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 @layerzerolabs/test-devtools-evm-foundry/=lib/devtools/packages/test-devtools-evm-foundry/
 solidity-bytes-utils/=lib/solidity-bytes-utils/
 @layerzerolabs/lz-evm-v1-0.7/=lib/LayerZero/
