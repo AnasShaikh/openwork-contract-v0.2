@@ -246,40 +246,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         emit AthenaClientChainEidUpdated(oldEid, _chainEid);
     }
     
-    // ==================== HELPER FUNCTIONS ====================
-    
-    function _notifyRewardsContract(address account, string memory actionType, bytes memory _options, uint256 nativeFee) private {
-        if (rewardsChainEid == 0) {
-            emit CrossContractCallFailed(account, "No rewards chain configured");
-            return;
-        }
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        
-        _lzSend(rewardsChainEid, payload, _options, MessagingFee(nativeFee, 0), payable(msg.sender));
-        
-        emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, nativeFee);
-    }
-    
-    function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor, bytes calldata _options, uint256 nativeFee) private {
-        if (athenaClientChainEid == 0) {
-            emit CrossContractCallFailed(voter, "No Athena client chain configured");
-            return;
-        }
-        
-        bytes memory payload = abi.encode("recordVote", disputeId, voter, claimAddress, votingPower, voteFor);
-        
-        _lzSend(
-            athenaClientChainEid,
-            payload,
-            _options,
-            MessagingFee(nativeFee, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
-    }
-    
     // ==================== VOTING ELIGIBILITY FUNCTIONS ====================
     
     function canVote(address account) public view returns (bool) {
@@ -435,9 +401,16 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         _handleAskAthena(msg.sender, _description, _hash, _targetOracle, _fees);
     }
     
-    // ==================== VOTING FUNCTIONS ====================
+    // ==================== UPDATED VOTING FUNCTIONS ====================
     
-    function vote(VotingType _votingType, string memory _disputeId, bool _voteFor, address _claimAddress, bytes calldata _options) external payable {
+    function vote(
+        VotingType _votingType, 
+        string memory _disputeId, 
+        bool _voteFor, 
+        address _claimAddress, 
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external payable {
         // Check if user can vote (has sufficient stake OR earned tokens)
         require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
         require(_claimAddress != address(0), "Claim address cannot be zero");
@@ -446,10 +419,32 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         uint256 voteWeight = getUserVotingPower(msg.sender);
         require(voteWeight > 0, "No voting power");
         
-        // Notify rewards contract about governance action
+        // Calculate fees for both cross-chain calls upfront
         string memory votingTypeStr = _votingType == VotingType.Dispute ? "dispute_vote" : 
                                      _votingType == VotingType.SkillVerification ? "skill_verification_vote" : "ask_athena_vote";
-        _notifyRewardsContract(msg.sender, votingTypeStr, _options, msg.value);
+        
+        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
+        MessagingFee memory rewardsFee = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
+        uint256 rewardsFeeCost = rewardsFee.nativeFee;
+        
+        // All voting types now send to Athena Client for fee distribution
+        bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+        MessagingFee memory athenaFee = _quote(athenaClientChainEid, athenaPayload, _athenaClientOptions, false);
+        uint256 athenaClientFeeCost = athenaFee.nativeFee;
+        
+        uint256 totalFeeCost = rewardsFeeCost + athenaClientFeeCost;
+        require(msg.value >= totalFeeCost, "Insufficient fee provided");
+        
+        // Send to rewards contract first
+        if (rewardsChainEid != 0) {
+            _lzSend(
+                rewardsChainEid,
+                rewardsPayload,
+                _rewardsOptions,
+                MessagingFee(rewardsFeeCost, 0),
+                payable(msg.sender)
+            );
+        }
         
         // Emit event if user is using earned tokens (no active stake above threshold)
         (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
@@ -464,13 +459,13 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             }
         }
         
-        // Route to appropriate voting function
+        // Route to appropriate voting function with separate fees
         if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _options, msg.value);
+            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
         } else if (_votingType == VotingType.SkillVerification) {
-            _voteOnSkillVerification(_disputeId, _voteFor, voteWeight);
+            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
         } else if (_votingType == VotingType.AskAthena) {
-            _voteOnAskAthena(_disputeId, _voteFor, voteWeight);
+            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
         }
     }
     
@@ -490,11 +485,23 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             dispute.votesAgainst += voteWeight;
         }
         
-        // Notify AthenaClient about the vote for fee distribution
-        _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor, _options, nativeFee);
+        // Notify AthenaClient about the vote for fee distribution using pre-calculated fee
+        if (athenaClientChainEid != 0) {
+            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            
+            _lzSend(
+                athenaClientChainEid,
+                payload,
+                _options,
+                MessagingFee(nativeFee, 0),
+                payable(msg.sender)
+            );
+            
+            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
+        }
     }
     
-    function _voteOnSkillVerification(string memory _disputeId, bool _voteFor, uint256 voteWeight) internal {
+    function _voteOnSkillVerification(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
         uint256 applicationId = stringToUint(_disputeId);
         require(applicationId < applicationCounter, "Application does not exist");
         require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
@@ -510,9 +517,24 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         } else {
             application.votesAgainst += voteWeight;
         }
+        
+        // Notify AthenaClient about the vote for fee distribution
+        if (athenaClientChainEid != 0) {
+            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            
+            _lzSend(
+                athenaClientChainEid,
+                payload,
+                _options,
+                MessagingFee(nativeFee, 0),
+                payable(msg.sender)
+            );
+            
+            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
+        }
     }
     
-    function _voteOnAskAthena(string memory _disputeId, bool _voteFor, uint256 voteWeight) internal {
+    function _voteOnAskAthena(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
         uint256 athenaId = stringToUint(_disputeId);
         require(athenaId < askAthenaCounter, "AskAthena application does not exist");
         require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
@@ -527,6 +549,21 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
             athenaApp.votesFor += voteWeight;
         } else {
             athenaApp.votesAgainst += voteWeight;
+        }
+        
+        // Notify AthenaClient about the vote for fee distribution
+        if (athenaClientChainEid != 0) {
+            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            
+            _lzSend(
+                athenaClientChainEid,
+                payload,
+                _options,
+                MessagingFee(nativeFee, 0),
+                payable(msg.sender)
+            );
+            
+            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
         }
     }
     
@@ -570,6 +607,33 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
         MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _options, false);
         return msgFee.nativeFee;
+    }
+    
+    function quoteVoteFees(
+        VotingType _votingType,
+        string memory _disputeId,
+        address _claimAddress,
+        bool _voteFor,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 athenaClientFee) {
+        // Calculate vote weight for the caller
+        uint256 voteWeight = getUserVotingPower(msg.sender);
+        
+        // Calculate rewards fee
+        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
+        MessagingFee memory rewardsMsg = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
+        rewardsFee = rewardsMsg.nativeFee;
+        
+        // Calculate athena client fee for all voting types
+        athenaClientFee = 0;
+        if (athenaClientChainEid != 0) {
+            bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+            MessagingFee memory athenaMsg = _quote(athenaClientChainEid, athenaPayload, _athenaClientOptions, false);
+            athenaClientFee = athenaMsg.nativeFee;
+        }
+        
+        totalFee = rewardsFee + athenaClientFee;
     }
     
     // ==================== UTILITY FUNCTIONS ====================
