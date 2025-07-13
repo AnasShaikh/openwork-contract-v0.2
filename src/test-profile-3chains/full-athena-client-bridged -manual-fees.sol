@@ -128,7 +128,7 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     
     // ==================== MESSAGE HANDLERS ====================
     
-function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
+    function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
     require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
     require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
     
@@ -136,7 +136,7 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
     dispute.winningSide = winningSide;
     dispute.isFinalized = true;
     
-    // Distribute fees automatically using locally stored vote data
+    // Distribute fees using locally stored vote data
     if (dispute.votes.length > 0) {
         uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
         
@@ -146,15 +146,7 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
                 
                 if (vote.voteFor == winningSide) {
                     uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
-                    
-                    // Store for reference
-                    claimableAmount[disputeId][vote.claimAddress] = voterShare;
-                    // Mark as automatically claimed
-                    hasClaimed[disputeId][vote.claimAddress] = true;
-                    
-                    // Automatically transfer
-                    require(usdtToken.transfer(vote.claimAddress, voterShare), "Fee transfer failed");
-                    emit FeesClaimed(disputeId, vote.claimAddress, voterShare);
+                    claimableAmount[disputeId][vote.claimAddress] += voterShare;
                 }
             }
         }
@@ -332,7 +324,20 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         emit CrossChainMessageSent("askAthena", nativeChainEid, payload);
     }
     
-
+    // Function for voters to claim their fees
+    function claimFees(string memory disputeId) external {
+        require(disputeFees[disputeId].isFinalized, "Dispute not finalized");
+        require(!hasClaimed[disputeId][msg.sender], "Already claimed");
+        require(claimableAmount[disputeId][msg.sender] > 0, "No fees to claim");
+        
+        uint256 amount = claimableAmount[disputeId][msg.sender];
+        hasClaimed[disputeId][msg.sender] = true;
+        claimableAmount[disputeId][msg.sender] = 0;
+        
+        require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
+        
+        emit FeesClaimed(disputeId, msg.sender, amount);
+    }
     
     // View function to get claimable amount for an address
     function getClaimableAmount(string memory disputeId, address claimAddress) external view returns (uint256) {
