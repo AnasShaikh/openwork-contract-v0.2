@@ -13,5 +13,7 @@ Native Athena - 0x249fEaF8E896ce14843453Fd2E9ba696d09C40c2
 Arbitrum Sepolia 
 USDT (self owned) -  0x403a1eea6FF82152F88Da33a51c439f7e2C85665
 Local OpenWork Job Contract (LOWJC) - 0x29fEd1102F2BadCb220B111e9317687d8Ebf9773
-Athena Client - 0x18Bb1F7fe80E213dbA8722b791C5313D0965208D
+Athena Client - 0x18Bb1F7fe80E213dbA8722b791C5313D0965208D (deprecated)
+AthenaClient Autopay Fees - 0x3C597eae77aD652a20E3B54B5dE9D89c9c7016E3
+Athena Client (Fixed for job taker dispute appl.) - 0x2F1c19B6BaB8339DC3b83f87E54d79feE7b728B8
 
