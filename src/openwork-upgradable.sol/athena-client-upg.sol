@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -39,18 +39,7 @@ struct Job {
     function resolveDispute(string memory jobId, bool jobGiverWins) external;
 }
 
-struct MessagingParams {
-    uint32 dstEid;
-    bytes32 receiver;
-    bytes message;
-    bytes options;
-    bool payInLzToken;
-}
 
-struct MessagingFee {
-    uint256 nativeFee;
-    uint256 lzTokenFee;
-}
 
 contract AthenaClientContract is 
     Initializable,
@@ -137,7 +126,7 @@ contract AthenaClientContract is
     function lzReceive(
         uint32 _srcEid,
         bytes32 _sender,
-        uint64 _nonce,
+        uint64 /*_nonce*/,
         bytes calldata _message
     ) external {
         require(msg.sender == address(endpoint), "Only endpoint can call");
