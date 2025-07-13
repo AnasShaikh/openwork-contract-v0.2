@@ -30,23 +30,15 @@ interface INativeOpenWorkJobContract {
     function jobExists(string memory _jobId) external view returns (bool);
 }
 
-// Interface to communicate with AthenaClient Contract
-interface IAthenaClient {
-    function recordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external;
-    function finalizeDispute(string memory disputeId, bool winningSide, uint256 totalVotingPowerFor, uint256 totalVotingPowerAgainst) external;
-}
-
 contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     address public daoContract;
     
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
-    // AthenaClient Contract for fee distribution
-    IAthenaClient public athenaClient;
-    
     // Cross-chain settings
     uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
+    uint32 public athenaClientChainEid = 40231; // Arbitrum Sepolia by default
     
     // Add this enum to define voting types
     enum VotingType {
@@ -117,7 +109,6 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     
     // Events
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
-    event AthenaClientUpdated(address indexed oldContract, address indexed newContract);
     event EarnedTokensUsedForVoting(address indexed user, uint256 earnedTokens, string votingType);
     event CrossContractCallFailed(address indexed account, string reason);
     event DisputeFinalized(string indexed disputeId, bool winningSide, uint256 totalVotesFor, uint256 totalVotesAgainst);
@@ -127,6 +118,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
     event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
+    event AthenaClientChainEidUpdated(uint32 oldEid, uint32 newEid);
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
     
     modifier onlyDAO() {
@@ -242,16 +234,16 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
     
-    function setAthenaClient(address _athenaClient) external onlyOwner {
-        address oldContract = address(athenaClient);
-        athenaClient = IAthenaClient(_athenaClient);
-        emit AthenaClientUpdated(oldContract, _athenaClient);
-    }
-    
     function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
         uint32 oldEid = rewardsChainEid;
         rewardsChainEid = _rewardsChainEid;
         emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
+    }
+    
+    function updateAthenaClientChainEid(uint32 _chainEid) external onlyOwner {
+        uint32 oldEid = athenaClientChainEid;
+        athenaClientChainEid = _chainEid;
+        emit AthenaClientChainEidUpdated(oldEid, _chainEid);
     }
     
     // ==================== HELPER FUNCTIONS ====================
@@ -269,16 +261,23 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         emit CrossChainGovernanceNotificationSent(account, actionType, rewardsChainEid, nativeFee);
     }
     
-    function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) private {
-        if (address(athenaClient) != address(0)) {
-            try athenaClient.recordVote(disputeId, voter, claimAddress, votingPower, voteFor) {
-                // Success
-            } catch Error(string memory reason) {
-                emit CrossContractCallFailed(voter, string(abi.encodePacked("AthenaClient vote recording failed: ", reason)));
-            } catch {
-                emit CrossContractCallFailed(voter, "AthenaClient vote recording failed: Unknown error");
-            }
+    function _notifyAthenaClient(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor, bytes calldata _options, uint256 nativeFee) private {
+        if (athenaClientChainEid == 0) {
+            emit CrossContractCallFailed(voter, "No Athena client chain configured");
+            return;
         }
+        
+        bytes memory payload = abi.encode("recordVote", disputeId, voter, claimAddress, votingPower, voteFor);
+        
+        _lzSend(
+            athenaClientChainEid,
+            payload,
+            _options,
+            MessagingFee(nativeFee, 0),
+            payable(msg.sender)
+        );
+        
+        emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
     }
     
     // ==================== VOTING ELIGIBILITY FUNCTIONS ====================
@@ -467,7 +466,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         
         // Route to appropriate voting function
         if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight);
+            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _options, msg.value);
         } else if (_votingType == VotingType.SkillVerification) {
             _voteOnSkillVerification(_disputeId, _voteFor, voteWeight);
         } else if (_votingType == VotingType.AskAthena) {
@@ -475,7 +474,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         }
     }
     
-    function _voteOnDispute(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight) internal {
+    function _voteOnDispute(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
         require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
         require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
         
@@ -492,7 +491,7 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
         }
         
         // Notify AthenaClient about the vote for fee distribution
-        _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+        _notifyAthenaClient(_disputeId, msg.sender, _claimAddress, voteWeight, _voteFor, _options, nativeFee);
     }
     
     function _voteOnSkillVerification(string memory _disputeId, bool _voteFor, uint256 voteWeight) internal {
@@ -532,34 +531,33 @@ contract CrossChainNativeAthena is OAppReceiver, OAppSender {
     }
     
     // Function to finalize dispute - can be called by anyone
-function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
-    require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
-    
-    Dispute storage dispute = disputes[_disputeId];
-    require(dispute.isVotingActive, "Voting is not active for this dispute");
-    require(!dispute.isFinalized, "Dispute already finalized");
-    require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
-    
-    // Finalize the dispute
-    dispute.isVotingActive = false;
-    dispute.isFinalized = true;
-    dispute.result = dispute.votesFor > dispute.votesAgainst;
-    
-    // Send simplified cross-chain message to AthenaClient with only the winning side
-    uint32 athenaClientChainEid = 40231; // Arbitrum Sepolia
-    bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
-    
-    _lzSend(
-        athenaClientChainEid,
-        payload,
-        _athenaClientOptions,
-        MessagingFee(msg.value, 0),
-        payable(msg.sender)
-    );
-    
-    emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
-    emit CrossChainMessageSent("finalizeDispute", athenaClientChainEid, payload);
-}
+    function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
+        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+        
+        Dispute storage dispute = disputes[_disputeId];
+        require(dispute.isVotingActive, "Voting is not active for this dispute");
+        require(!dispute.isFinalized, "Dispute already finalized");
+        require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
+        
+        // Finalize the dispute
+        dispute.isVotingActive = false;
+        dispute.isFinalized = true;
+        dispute.result = dispute.votesFor > dispute.votesAgainst;
+        
+        // Send simplified cross-chain message to AthenaClient with only the winning side
+        bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
+        
+        _lzSend(
+            athenaClientChainEid,
+            payload,
+            _athenaClientOptions,
+            MessagingFee(msg.value, 0),
+            payable(msg.sender)
+        );
+        
+        emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
+        emit CrossChainMessageSent("finalizeDispute", athenaClientChainEid, payload);
+    }
     
     // ==================== QUOTE FUNCTIONS ====================
     
@@ -593,6 +591,10 @@ function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientO
     
     function getRewardsChainEid() external view returns (uint32) {
         return rewardsChainEid;
+    }
+    
+    function getAthenaClientChainEid() external view returns (uint32) {
+        return athenaClientChainEid;
     }
     
     // ==================== VIEW FUNCTIONS ====================
