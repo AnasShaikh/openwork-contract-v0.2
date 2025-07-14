@@ -5,39 +5,41 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import { ILayerZeroEndpointV2, MessagingParams, MessagingFee, Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface ILocalOpenWorkJobContract {
     enum JobStatus { Open, InProgress, Completed, Cancelled }
     
-    struct MilestonePayment {
-        string descriptionHash;
-        uint256 amount;
-    }
+   struct MilestonePayment {
+    string descriptionHash;
+    uint256 amount;
+}
 
-    struct Job {
-        string id;
-        address jobGiver;
-        address[] applicants;
-        string jobDetailHash;
-        JobStatus status;
-        string[] workSubmissions;
-        MilestonePayment[] milestonePayments;
-        MilestonePayment[] finalMilestones;
-        uint256 totalPaid;
-        uint256 currentLockedAmount;
-        uint256 currentMilestone;
-        address selectedApplicant;
-        uint256 selectedApplicationId;
-        uint256 totalEscrowed;
-        uint256 totalReleased;
-    }
+struct Job {
+    string id;
+    address jobGiver;
+    address[] applicants;
+    string jobDetailHash;
+    JobStatus status;
+    string[] workSubmissions;
+    MilestonePayment[] milestonePayments;
+    MilestonePayment[] finalMilestones;
+    uint256 totalPaid;
+    uint256 currentLockedAmount;
+    uint256 currentMilestone;
+    address selectedApplicant;
+    uint256 selectedApplicationId;
+    uint256 totalEscrowed;
+    uint256 totalReleased;
+}
     
     function getJob(string memory _jobId) external view returns (Job memory);
     function resolveDispute(string memory jobId, bool jobGiverWins) external;
 }
+
+
 
 contract AthenaClientContract is 
     Initializable,
@@ -122,14 +124,13 @@ contract AthenaClientContract is
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
     function lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid
-        bytes calldata _message,
-        address, // _executor
-        bytes calldata // _extraData
+        uint32 _srcEid,
+        bytes32 _sender,
+        uint64 /*_nonce*/,
+        bytes calldata _message
     ) external {
         require(msg.sender == address(endpoint), "Only endpoint can call");
-        require(peers[_origin.srcEid] == _origin.sender, "Invalid sender");
+        require(peers[_srcEid] == _sender, "Invalid sender");
         
         (string memory functionName) = abi.decode(_message, (string));
         
@@ -141,7 +142,7 @@ contract AthenaClientContract is
             _handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
         }
         
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+        emit CrossChainMessageReceived(functionName, _srcEid, _message);
     }
     
     // ==================== MESSAGE HANDLERS ====================

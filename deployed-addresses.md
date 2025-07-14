@@ -20,5 +20,8 @@ Athena Client (Fixed for job taker dispute appl.) - 0x2F1c19B6BaB8339DC3b83f87E5
 Athena Upgradable - Proxy:0x97724D202dA9fF7C081F5c04c551C76e98271B53, 
                     Impl. : 0x9C318CD6FfFBb07a5beB65747347a5eca065e528 
 
+Athena Upgradable 2 - Proxy:0x094A772e6f5e4b1DC4077DAbc2Bd76241F1a72B3, 
+                    Impl. : 0xbA0BeB1F7a5C78aB49dE51B5B736ffa5500ce200 
+
 
 
