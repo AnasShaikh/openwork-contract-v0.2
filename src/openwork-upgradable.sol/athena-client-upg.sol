@@ -5,36 +5,36 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import { ILayerZeroEndpointV2, MessagingParams, MessagingFee, Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import { ILayerZeroReceiver } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroReceiver.sol";
+import { MessagingParams, MessagingFee, Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface ILocalOpenWorkJobContract {
     enum JobStatus { Open, InProgress, Completed, Cancelled }
     
-    struct MilestonePayment {
-        string descriptionHash;
-        uint256 amount;
-    }
+   struct MilestonePayment {
+    string descriptionHash;
+    uint256 amount;
+}
 
-    struct Job {
-        string id;
-        address jobGiver;
-        address[] applicants;
-        string jobDetailHash;
-        JobStatus status;
-        string[] workSubmissions;
-        MilestonePayment[] milestonePayments;
-        MilestonePayment[] finalMilestones;
-        uint256 totalPaid;
-        uint256 currentLockedAmount;
-        uint256 currentMilestone;
-        address selectedApplicant;
-        uint256 selectedApplicationId;
-        uint256 totalEscrowed;
-        uint256 totalReleased;
-    }
+struct Job {
+    string id;
+    address jobGiver;
+    address[] applicants;
+    string jobDetailHash;
+    JobStatus status;
+    string[] workSubmissions;
+    MilestonePayment[] milestonePayments;
+    MilestonePayment[] finalMilestones;
+    uint256 totalPaid;
+    uint256 currentLockedAmount;
+    uint256 currentMilestone;
+    address selectedApplicant;
+    uint256 selectedApplicationId;
+    uint256 totalEscrowed;
+    uint256 totalReleased;
+}
     
     function getJob(string memory _jobId) external view returns (Job memory);
     function resolveDispute(string memory jobId, bool jobGiverWins) external;
@@ -44,8 +44,7 @@ contract AthenaClientContract is
     Initializable,
     UUPSUpgradeable,
     OwnableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    ILayerZeroReceiver
+    ReentrancyGuardUpgradeable
 {
     using SafeERC20 for IERC20;
     
@@ -123,21 +122,16 @@ contract AthenaClientContract is
     
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
-    // Implement the proper ILayerZeroReceiver interface
+    // FIXED: LayerZero V2 calls this function on the receiver contract
     function lzReceive(
         Origin calldata _origin,
         bytes32 _guid,
         bytes calldata _message,
         address _executor,
         bytes calldata _extraData
-    ) external payable override {
-        // Only the endpoint can call this function
+    ) external payable {
         require(msg.sender == address(endpoint), "Only endpoint can call");
-        
-        // Optional: Add peer validation
-        if (peers[_origin.srcEid] != bytes32(0)) {
-            require(peers[_origin.srcEid] == _origin.sender, "Invalid sender");
-        }
+        require(peers[_origin.srcEid] == _origin.sender, "Invalid peer");
         
         (string memory functionName) = abi.decode(_message, (string));
         
@@ -150,18 +144,6 @@ contract AthenaClientContract is
         }
         
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
-    }
-    
-    // Required by ILayerZeroReceiver - allows the endpoint to check if the receiver can handle the message
-    function allowInitializePath(Origin calldata _origin) external view override returns (bool) {
-        // Allow messages from any configured peer or if no peers are set yet
-        return peers[_origin.srcEid] == bytes32(0) || peers[_origin.srcEid] == _origin.sender;
-    }
-    
-    // Required by ILayerZeroReceiver - returns the next nonce expected from the source
-    function nextNonce(uint32 _srcEid, bytes32 _sender) external view override returns (uint64) {
-        // For simplicity, we don't track nonces in this implementation
-        return 0;
     }
     
     // ==================== MESSAGE HANDLERS ====================
@@ -230,13 +212,25 @@ contract AthenaClientContract is
     
     // ==================== LAYERZERO SEND FUNCTIONS ====================
     
+    // Override to change fee check from equivalency to < since batch fees are cumulative
+    function _payNative(uint256 _nativeFee) internal virtual returns (uint256 nativeFee) {
+        if (msg.value < _nativeFee) revert("Insufficient native fee");
+        return _nativeFee;
+    }
+    
     function _lzSend(
         uint32 _dstEid,
         bytes memory _message,
-        bytes calldata _options
-    ) internal {
+        bytes memory _options,
+        MessagingFee memory _fee,
+        address _refundAddress
+    ) internal returns (bytes32 guid) {
         require(peers[_dstEid] != bytes32(0), "Peer not set");
         
+        // Pay the native fee
+        uint256 messageValue = _payNative(_fee.nativeFee);
+        
+        // Use the exact LayerZero V2 interface
         MessagingParams memory params = MessagingParams({
             dstEid: _dstEid,
             receiver: peers[_dstEid],
@@ -245,14 +239,15 @@ contract AthenaClientContract is
             payInLzToken: false
         });
         
-        endpoint.send{value: msg.value}(params, msg.sender);
+        return endpoint.send{value: messageValue}(params, _refundAddress).guid;
     }
     
-    function quote(
+    function _quote(
         uint32 _dstEid,
         bytes memory _message,
-        bytes calldata _options
-    ) public view returns (MessagingFee memory fee) {
+        bytes memory _options,
+        bool _payInLzToken
+    ) internal view returns (MessagingFee memory fee) {
         require(peers[_dstEid] != bytes32(0), "Peer not set");
         
         MessagingParams memory params = MessagingParams({
@@ -260,10 +255,10 @@ contract AthenaClientContract is
             receiver: peers[_dstEid],
             message: _message,
             options: _options,
-            payInLzToken: false
+            payInLzToken: _payInLzToken
         });
         
-        return endpoint.quote(params, msg.sender);
+        return endpoint.quote(params, address(this));
     }
     
     // ==================== ADMIN FUNCTIONS ====================
@@ -336,7 +331,8 @@ contract AthenaClientContract is
         
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount, msg.sender);
-        _lzSend(nativeChainEid, payload, _options);
+        MessagingFee memory fee = _quote(nativeChainEid, payload, _options, false);
+        _lzSend(nativeChainEid, payload, _options, fee, msg.sender);
         
         emit DisputeRaised(msg.sender, _jobId, _feeAmount);
         emit CrossChainMessageSent("raiseDispute", nativeChainEid, payload);
@@ -358,7 +354,8 @@ contract AthenaClientContract is
         
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("submitSkillVerification", msg.sender, _applicationHash, _feeAmount, _targetOracleName);
-        _lzSend(nativeChainEid, payload, _options);
+        MessagingFee memory fee = _quote(nativeChainEid, payload, _options, false);
+        _lzSend(nativeChainEid, payload, _options, fee, msg.sender);
         
         emit SkillVerificationSubmitted(msg.sender, _targetOracleName, _feeAmount);
         emit CrossChainMessageSent("submitSkillVerification", nativeChainEid, payload);
@@ -384,7 +381,8 @@ contract AthenaClientContract is
         
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("askAthena", msg.sender, _description, _hash, _targetOracle, feeString);
-        _lzSend(nativeChainEid, payload, _options);
+        MessagingFee memory fee = _quote(nativeChainEid, payload, _options, false);
+        _lzSend(nativeChainEid, payload, _options, fee, msg.sender);
         
         emit AthenaAsked(msg.sender, _targetOracle, _feeAmount);
         emit CrossChainMessageSent("askAthena", nativeChainEid, payload);
@@ -447,6 +445,16 @@ contract AthenaClientContract is
     
     function getNativeChainEid() external view returns (uint32) {
         return nativeChainEid;
+    }
+    
+    // Quote functions
+    function quoteSingleChain(
+        string calldata _functionName,
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        MessagingFee memory msgFee = _quote(nativeChainEid, _payload, _options, false);
+        return msgFee.nativeFee;
     }
     
     // ==================== UTILITY FUNCTIONS ====================

@@ -27,4 +27,8 @@ Athena UUPS 3 - implementation : 0xedcc18E5BD7aAf69F91a602920d7663d2e382271
                 proxy : 0x425c3155582a0EAA882A47b64c423Cf6e84178f9
 
 
+Athena 4 - impl. : 0xFCff369afC34463FfF282aC4c6b52eD1a5c71928
+            proxy : 0x009789514D06F0eC0e82e95408987631C6F791BD
+
+
 
