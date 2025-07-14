@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import { ILayerZeroEndpointV2, MessagingParams, MessagingFee, Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import { ILayerZeroReceiver } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroReceiver.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -43,7 +44,8 @@ contract AthenaClientContract is
     Initializable,
     UUPSUpgradeable,
     OwnableUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    ILayerZeroReceiver
 {
     using SafeERC20 for IERC20;
     
@@ -121,15 +123,21 @@ contract AthenaClientContract is
     
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
+    // Implement the proper ILayerZeroReceiver interface
     function lzReceive(
         Origin calldata _origin,
-        bytes32, // _guid
+        bytes32 _guid,
         bytes calldata _message,
-        address, // _executor
-        bytes calldata // _extraData
-    ) external {
+        address _executor,
+        bytes calldata _extraData
+    ) external payable override {
+        // Only the endpoint can call this function
         require(msg.sender == address(endpoint), "Only endpoint can call");
-        require(peers[_origin.srcEid] == _origin.sender, "Invalid sender");
+        
+        // Optional: Add peer validation
+        if (peers[_origin.srcEid] != bytes32(0)) {
+            require(peers[_origin.srcEid] == _origin.sender, "Invalid sender");
+        }
         
         (string memory functionName) = abi.decode(_message, (string));
         
@@ -142,6 +150,18 @@ contract AthenaClientContract is
         }
         
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+    }
+    
+    // Required by ILayerZeroReceiver - allows the endpoint to check if the receiver can handle the message
+    function allowInitializePath(Origin calldata _origin) external view override returns (bool) {
+        // Allow messages from any configured peer or if no peers are set yet
+        return peers[_origin.srcEid] == bytes32(0) || peers[_origin.srcEid] == _origin.sender;
+    }
+    
+    // Required by ILayerZeroReceiver - returns the next nonce expected from the source
+    function nextNonce(uint32 _srcEid, bytes32 _sender) external view override returns (uint64) {
+        // For simplicity, we don't track nonces in this implementation
+        return 0;
     }
     
     // ==================== MESSAGE HANDLERS ====================
