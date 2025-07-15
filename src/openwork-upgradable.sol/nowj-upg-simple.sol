@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ILayerZeroEndpointV2 } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 
-contract NativeOpenWorkJobContract is OAppReceiver {
+contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     enum JobStatus {
         Open,
         InProgress,
@@ -69,6 +70,11 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     // Reward bands array
     RewardBand[] public rewardBands;
 
+    // ==================== LAYERZERO STATE VARIABLES ====================
+    
+    ILayerZeroEndpointV2 public endpoint;
+    address public delegate;
+
     // ==================== EXISTING CONTRACT STATE ====================
     
     mapping(address => Profile) public profiles;
@@ -102,11 +108,40 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     // New rewards events
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newCumulativeEarnings, uint256 newTotalTokens);
     
-    constructor(address _endpoint, address _owner) OAppCore(_endpoint, _owner) Ownable(_owner) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _endpoint, address _owner) public initializer {
+        __Ownable_init(_owner);
+        __UUPSUpgradeable_init();
+        
+        // Initialize LayerZero endpoint and delegate
+        endpoint = ILayerZeroEndpointV2(_endpoint);
+        delegate = _owner;
+        
         _initializeRewardBands();
     }
 
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    function version() public pure returns (string memory) {
+        return "1.0.0";
+    }
+
     // ==================== LAYERZERO MESSAGE HANDLING ====================
+    
+    function lzReceive(
+        Origin calldata _origin,
+        bytes32 _guid,
+        bytes calldata _message,
+        address _executor,
+        bytes calldata _extraData
+    ) external payable {
+        require(msg.sender == address(endpoint), "Only endpoint can call");
+        _lzReceive(_origin, _guid, _message, _executor, _extraData);
+    }
     
     function _lzReceive(
         Origin calldata _origin,
@@ -114,7 +149,7 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         bytes calldata _message,
         address, // _executor (not used)
         bytes calldata // _extraData (not used)
-    ) internal override {
+    ) internal {
         (string memory functionName) = abi.decode(_message, (string));
         
         if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
@@ -385,6 +420,17 @@ contract NativeOpenWorkJobContract is OAppReceiver {
         emit PortfolioAdded(user, portfolioHash);
     }
 
+    
+    // ==================== LAYERZERO CONFIGURATION FUNCTIONS ====================
+    
+    function setDelegate(address _delegate) external onlyOwner {
+        delegate = _delegate;
+    }
+    
+    function setEndpoint(address _endpoint) external onlyOwner {
+        endpoint = ILayerZeroEndpointV2(_endpoint);
+    }
+    
     // ==================== REWARDS INITIALIZATION ====================
     
     function _initializeRewardBands() private {
@@ -795,4 +841,13 @@ contract NativeOpenWorkJobContract is OAppReceiver {
     function getUserReferrer(address user) external view returns (address) {
         return userReferrers[user];
     }
+
+    // ==================== STORAGE GAP ====================
+    
+    /**
+     * @dev This empty reserved space is put in place to allow future versions to add new
+     * variables without shifting down storage in the inheritance chain.
+     * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
+     */
+    uint256[50] private __gap;
 }

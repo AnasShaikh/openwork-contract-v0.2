@@ -123,7 +123,7 @@ contract AthenaClientContract is
     
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
-    function lzReceive(
+    function _lzReceive(
         uint32 _srcEid,
         bytes32 _sender,
         uint64 /*_nonce*/,

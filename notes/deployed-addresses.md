@@ -16,19 +16,3 @@ Local OpenWork Job Contract (LOWJC) - 0x29fEd1102F2BadCb220B111e9317687d8Ebf9773
 Athena Client - 0x18Bb1F7fe80E213dbA8722b791C5313D0965208D (deprecated)
 AthenaClient Autopay Fees - 0x3C597eae77aD652a20E3B54B5dE9D89c9c7016E3
 Athena Client (Fixed for job taker dispute appl.) - 0x2F1c19B6BaB8339DC3b83f87E54d79feE7b728B8
-
-Athena Upgradable - Proxy:0x97724D202dA9fF7C081F5c04c551C76e98271B53, 
-                    Impl. : 0x9C318CD6FfFBb07a5beB65747347a5eca065e528 
-
-Athena Upgradable 2 - Proxy:0xe07a19eFd5563C7875685971EBD7ADe5a451c79f, 
-                    Impl. : 0xbA0BeB1F7a5C78aB49dE51B5B736ffa5500ce200 
-
-Athena UUPS 3 - implementation : 0xedcc18E5BD7aAf69F91a602920d7663d2e382271     
-                proxy : 0x425c3155582a0EAA882A47b64c423Cf6e84178f9
-
-
-Athena 4 - impl. : 0xFCff369afC34463FfF282aC4c6b52eD1a5c71928
-            proxy : 0x009789514D06F0eC0e82e95408987631C6F791BD
-
-
-
