@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import { ILayerZeroEndpointV2 } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
+interface INativeChainBridge {
+    // The NOWJC contract doesn't send any messages, only receives them
+    // So no bridge sending functions needed - only receiving via bridge handlers
+}
 
-contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpgradeable {
+contract NativeOpenWorkJobContract is Ownable {
     enum JobStatus {
         Open,
         InProgress,
@@ -70,11 +70,6 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
     // Reward bands array
     RewardBand[] public rewardBands;
 
-    // ==================== LAYERZERO STATE VARIABLES ====================
-    
-    ILayerZeroEndpointV2 public endpoint;
-    address public delegate;
-
     // ==================== EXISTING CONTRACT STATE ====================
     
     mapping(address => Profile) public profiles;
@@ -91,6 +86,9 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
     string[] public allJobIds;
     mapping(address => string[]) public jobsByPoster;
     
+    // Bridge reference
+    address public bridge;
+    
     // ==================== EVENTS ====================
     
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
@@ -104,88 +102,21 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
     event PortfolioAdded(address indexed user, string portfolioHash);
     event JobStatusChanged(string indexed jobId, JobStatus newStatus);
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
+    event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     
     // New rewards events
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newCumulativeEarnings, uint256 newTotalTokens);
     
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(address _endpoint, address _owner) public initializer {
-        __Ownable_init(_owner);
-        __UUPSUpgradeable_init();
-        
-        // Initialize LayerZero endpoint and delegate
-        endpoint = ILayerZeroEndpointV2(_endpoint);
-        delegate = _owner;
-        
+    constructor(address _owner, address _bridge) Ownable(_owner) {
+        bridge = _bridge;
         _initializeRewardBands();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    // ==================== MESSAGE HANDLERS ====================
 
-    function version() public pure returns (string memory) {
-        return "1.0.0";
-    }
-
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-    function lzReceive(
-        Origin calldata _origin,
-        bytes32 _guid,
-        bytes calldata _message,
-        address _executor,
-        bytes calldata _extraData
-    ) external payable {
-        require(msg.sender == address(endpoint), "Only endpoint can call");
-        _lzReceive(_origin, _guid, _message, _executor, _extraData);
-    }
-    
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal {
-        (string memory functionName) = abi.decode(_message, (string));
+    function handleCreateProfile(address user, string memory ipfsHash, address referrer) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
         
-        if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
-            (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
-            _handleCreateProfile(user, ipfsHash, referrer);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
-            (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
-            _handlePostJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
-            (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
-            _handleApplyToJob(applicant, jobId, applicationHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
-            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
-            _handleStartJob(jobGiver, jobId, applicationId, useApplicantMilestones);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
-            (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
-            _handleSubmitWork(applicant, jobId, submissionHash);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
-            (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
-            _handleReleasePayment(jobGiver, jobId, amount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
-            (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
-            _handleLockNextMilestone(caller, jobId, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
-            (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
-            _handleReleasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
-            (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
-            _handleRate(rater, jobId, userToRate, rating);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
-            (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
-            _handleAddPortfolio(user, portfolioHash);
-        }
-    }
-
-    function _handleCreateProfile(address user, string memory ipfsHash, address referrer) internal {
         if (!hasProfile[user]) {
             profiles[user] = Profile({
                 userAddress: user,
@@ -201,7 +132,9 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         }
     }
 
-    function _handlePostJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) internal {
+    function handlePostJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         if (bytes(jobs[jobId].id).length == 0) {
             jobCounter++;
             allJobIds.push(jobId);
@@ -229,7 +162,9 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         }
     }
 
-    function _handleApplyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) internal {
+    function handleApplyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         bool alreadyApplied = false;
         for (uint i = 0; i < jobs[jobId].applicants.length; i++) {
             if (jobs[jobId].applicants[i] == applicant) {
@@ -260,7 +195,9 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         }
     }
 
-    function _handleStartJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) internal {
+    function handleStartJob(address /* jobGiver */, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         Application storage application = jobApplications[jobId][applicationId];
         Job storage job = jobs[jobId];
         
@@ -283,12 +220,16 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         emit JobStatusChanged(jobId, JobStatus.InProgress);
     }
 
-    function _handleSubmitWork(address applicant, string memory jobId, string memory submissionHash) internal {
+    function handleSubmitWork(address applicant, string memory jobId, string memory submissionHash) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         jobs[jobId].workSubmissions.push(submissionHash);
         emit WorkSubmitted(jobId, applicant, submissionHash, jobs[jobId].currentMilestone);
     }
 
-    function _handleReleasePayment(address jobGiver, string memory jobId, uint256 amount) internal {
+    function handleReleasePayment(address jobGiver, string memory jobId, uint256 amount) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         jobs[jobId].totalPaid += amount;
         totalPlatformPayments += amount;
 
@@ -335,18 +276,21 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
             emit JobStatusChanged(jobId, JobStatus.Completed);
         }
         
-        
         emit PaymentReleased(jobId, jobGiver, jobs[jobId].selectedApplicant, amount, jobs[jobId].currentMilestone);
     }
 
-    function _handleLockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) internal {
+    function handleLockNextMilestone(address /* caller */, string memory jobId, uint256 lockedAmount) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         if (jobs[jobId].currentMilestone < jobs[jobId].finalMilestones.length) {
             jobs[jobId].currentMilestone += 1;
             emit MilestoneLocked(jobId, jobs[jobId].currentMilestone, lockedAmount);
         }
     }
 
-    function _handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) internal {
+    function handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         jobs[jobId].totalPaid += releasedAmount;
         totalPlatformPayments += releasedAmount;
 
@@ -395,11 +339,12 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
             emit JobStatusChanged(jobId, JobStatus.Completed);
         }
         
-        
         emit PaymentReleasedAndNextMilestoneLocked(jobId, releasedAmount, lockedAmount, jobs[jobId].currentMilestone);
     }
 
-    function _handleRate(address rater, string memory jobId, address userToRate, uint256 rating) internal {
+    function handleRate(address rater, string memory jobId, address userToRate, uint256 rating) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         bool isAuthorized = false;
         
         if (rater == jobs[jobId].jobGiver && userToRate == jobs[jobId].selectedApplicant) {
@@ -415,22 +360,21 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         }
     }
 
-    function _handleAddPortfolio(address user, string memory portfolioHash) internal {
+    function handleAddPortfolio(address user, string memory portfolioHash) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
         profiles[user].portfolioHashes.push(portfolioHash);
         emit PortfolioAdded(user, portfolioHash);
     }
 
+    // ==================== ADMIN FUNCTIONS ====================
     
-    // ==================== LAYERZERO CONFIGURATION FUNCTIONS ====================
-    
-    function setDelegate(address _delegate) external onlyOwner {
-        delegate = _delegate;
+    function setBridge(address _bridge) external onlyOwner {
+        address oldBridge = bridge;
+        bridge = _bridge;
+        emit BridgeUpdated(oldBridge, _bridge);
     }
-    
-    function setEndpoint(address _endpoint) external onlyOwner {
-        endpoint = ILayerZeroEndpointV2(_endpoint);
-    }
-    
+
     // ==================== REWARDS INITIALIZATION ====================
     
     function _initializeRewardBands() private {
@@ -523,9 +467,8 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         return calculateTokensForRange(currentCumulative, newCumulative);
     }
 
-    // ==================== EXISTING CONTRACT FUNCTIONS ====================
+    // ==================== LOCAL FUNCTIONS (for direct use if needed) ====================
     
-
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
         require(!hasProfile[_user], "Profile already exists");
         
@@ -798,6 +741,8 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
         emit PortfolioAdded(_user, _portfolioHash);
     }
     
+    // ==================== VIEW FUNCTIONS ====================
+    
     function getJobCount() external view returns (uint256) {
         return jobCounter;
     }
@@ -841,13 +786,4 @@ contract NativeOpenWorkJobContract is Initializable, UUPSUpgradeable, OwnableUpg
     function getUserReferrer(address user) external view returns (address) {
         return userReferrers[user];
     }
-
-    // ==================== STORAGE GAP ====================
-    
-    /**
-     * @dev This empty reserved space is put in place to allow future versions to add new
-     * variables without shifting down storage in the inheritance chain.
-     * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
-     */
-    uint256[50] private __gap;
 }

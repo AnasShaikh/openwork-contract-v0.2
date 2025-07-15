@@ -5,9 +5,6 @@ import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/IGovernor.sol";
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 // Interface to get earned tokens from Native OpenWork Job Contract
@@ -16,25 +13,25 @@ interface INativeOpenWorkJobContract {
     function getUserRewardInfo(address user) external view returns (uint256 cumulativeEarnings, uint256 totalTokens);
 }
 
-// Interface to notify governance actions via Native Athena
-interface INativeAthena {
-    function notifyGovernanceActionFromNativeDAO(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
+interface INativeChainBridge {
+    function sendToRewardsChain(
+        string memory _functionName,
+        bytes memory _payload,
+        bytes calldata _options
     ) external payable;
-    function quoteNativeDAOGovernanceForwarding(
-        address account,
-        bytes calldata _rewardsOptions
+    
+    function quoteRewardsChain(
+        bytes calldata _payload,
+        bytes calldata _options
     ) external view returns (uint256 fee);
 }
 
-contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimple, OAppReceiver {
+contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable {
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
-    // Native Athena for governance action forwarding
-    INativeAthena public nativeAthena;
+    // Bridge for cross-chain communication
+    INativeChainBridge public bridge;
     
     // Governance parameters (same as main contract)
     uint256 public proposalStakeThreshold = 100 * 10**18;
@@ -74,52 +71,35 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     event CrossContractCallFailed(address indexed account, string reason);
     event CrossContractCallSuccess(address indexed account);
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
-    event NativeAthenaUpdated(address indexed oldContract, address indexed newContract);
+    event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     event EarnedTokensUsedForGovernance(address indexed user, uint256 earnedTokens, string action);
     event GovernanceActionNotified(address indexed user, string action);
-    event GovernanceActionSentToAthena(address indexed user, string action, uint256 fee);
-    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
+    event GovernanceActionSentToBridge(address indexed user, string action, uint256 fee);
     event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
     
-    constructor(address _endpoint, address _owner) 
+    constructor(address _owner, address _bridge) 
         Governor("CrossChainNativeDAO")
         GovernorSettings(
             1 minutes,
             5 minutes,
             100 * 10**18
         )
-        OAppCore(_endpoint, _owner)
         Ownable(_owner)
-    {}
-
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        if (keccak256(bytes(functionName)) == keccak256(bytes("updateStakeData"))) {
-            (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
-            _handleUpdateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
-        }
-        
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+    {
+        bridge = INativeChainBridge(_bridge);
     }
 
     // ==================== MESSAGE HANDLERS ====================
     
-    function _handleUpdateStakeData(
+    function handleUpdateStakeData(
         address staker,
         uint256 amount,
         uint256 unlockTime,
         uint256 durationMinutes,
         bool isActive
-    ) internal {
+    ) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        
         stakes[staker] = Stake({
             amount: amount,
             unlockTime: unlockTime,
@@ -146,58 +126,46 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
     
-    function setNativeAthena(address _nativeAthena) external onlyOwner {
-        address oldContract = address(nativeAthena);
-        nativeAthena = INativeAthena(_nativeAthena);
-        emit NativeAthenaUpdated(oldContract, _nativeAthena);
+    function setBridge(address _bridge) external onlyOwner {
+        address oldBridge = address(bridge);
+        bridge = INativeChainBridge(_bridge);
+        emit BridgeUpdated(oldBridge, _bridge);
     }
     
-    // ==================== LOCAL INTERFACE FOR NATIVE ATHENA ====================
+    // ==================== CROSS-CHAIN MESSAGING VIA BRIDGE ====================
     
     /**
-     * @notice Function for Native Athena to call (if needed for future functionality)
-     * @param account Address of the user
-     */
-    function notifyGovernanceActionFromAthena(address account) external {
-        require(msg.sender == address(nativeAthena), "Only Native Athena can call this");
-        
-        // For now, just emit event - can be extended in future
-        emit GovernanceActionNotified(account, "athena_action");
-    }
-    
-    // ==================== CROSS-CHAIN MESSAGING VIA NATIVE ATHENA ====================
-    
-    /**
-     * @notice Send governance notification via Native Athena
+     * @notice Send governance notification via Bridge
      * @param account Address of the user who performed governance action
      * @param actionType Type of governance action
      * @param _options LayerZero options for the message
      */
-    function _sendGovernanceNotificationViaAthena(
+    function _sendGovernanceNotificationViaBridge(
         address account, 
         string memory actionType,
         bytes memory _options
     ) internal {
-        if (address(nativeAthena) == address(0)) {
-            emit CrossContractCallFailed(account, "Native Athena not set");
+        if (address(bridge) == address(0)) {
+            emit CrossContractCallFailed(account, "Bridge not set");
             return;
         }
         
-        // Get fee quote from Native Athena
+        // Get fee quote from Bridge
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
         uint256 fee = 0;
-        try nativeAthena.quoteNativeDAOGovernanceForwarding(account, _options) returns (uint256 quotedFee) {
+        try bridge.quoteRewardsChain(payload, _options) returns (uint256 quotedFee) {
             fee = quotedFee;
         } catch {
             emit CrossContractCallFailed(account, "Failed to quote governance forwarding fee");
             return;
         }
         
-        // Send via Native Athena if fee is available
+        // Send via Bridge if fee is available
         if (fee > 0 && address(this).balance >= fee) {
-            try nativeAthena.notifyGovernanceActionFromNativeDAO{value: fee}(account, actionType, _options) {
-                emit GovernanceActionSentToAthena(account, actionType, fee);
+            try bridge.sendToRewardsChain{value: fee}("notifyGovernanceAction", payload, _options) {
+                emit GovernanceActionSentToBridge(account, actionType, fee);
             } catch {
-                emit CrossContractCallFailed(account, "Failed to send governance action to Athena");
+                emit CrossContractCallFailed(account, "Failed to send governance action to Bridge");
             }
         } else {
             emit CrossContractCallFailed(account, "Insufficient balance for governance forwarding");
@@ -258,7 +226,7 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         uint256 durationMinutes,
         bool isActive
     ) external onlyOwner {
-        _handleUpdateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
+        handleUpdateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
     }
     
     // ==================== EARNER MANAGEMENT ====================
@@ -420,8 +388,8 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
             }
         }
         
-        // Send governance notification via Native Athena
-        _sendGovernanceNotificationViaAthena(msg.sender, "vote", _options);
+        // Send governance notification via Bridge
+        _sendGovernanceNotificationViaBridge(msg.sender, "vote", _options);
         
         return _castVote(proposalId, msg.sender, support, reason, "");
     }
@@ -466,8 +434,8 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
             }
         }
         
-        // Send governance notification via Native Athena
-        _sendGovernanceNotificationViaAthena(msg.sender, "propose", _options);
+        // Send governance notification via Bridge
+        _sendGovernanceNotificationViaBridge(msg.sender, "propose", _options);
         
         uint256 proposalId = super.propose(targets, values, calldatas, description);
         proposalIds.push(proposalId);
@@ -554,9 +522,10 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
         address account,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        if (address(nativeAthena) == address(0)) return 0;
+        if (address(bridge) == address(0)) return 0;
         
-        return nativeAthena.quoteNativeDAOGovernanceForwarding(account, _options);
+        bytes memory payload = abi.encode("notifyGovernanceAction", account);
+        return bridge.quoteRewardsChain(payload, _options);
     }
     
     // ==================== ADMIN FUNCTIONS ====================
@@ -590,5 +559,5 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     }
     
     // Allow contract to receive ETH for paying LayerZero fees
-    receive() external payable override {}
+    receive() external payable {}
 }

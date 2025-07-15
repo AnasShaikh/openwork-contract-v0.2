@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 // Interface to get staker info from Native DAO (now local)
@@ -31,13 +27,40 @@ interface INativeOpenWorkJobContract {
     function jobExists(string memory _jobId) external view returns (bool);
 }
 
-contract NativeAthena is OAppReceiver, OAppSender {
+interface INativeChainBridge {
+    function sendToRewardsChain(
+        string memory _functionName,
+        bytes memory _payload,
+        bytes calldata _options
+    ) external payable;
+    
+    function sendToAthenaClientChain(
+        string memory _functionName,
+        bytes memory _payload,
+        bytes calldata _options
+    ) external payable;
+    
+    function quoteRewardsChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee);
+    
+    function quoteAthenaClientChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee);
+}
+
+contract NativeAthena is Ownable {
     address public daoContract;
     
     // Native OpenWork Job Contract for earned tokens check
     INativeOpenWorkJobContract public nowjContract;
     
-    // Cross-chain settings - UPDATED: Only need to communicate with Rewards and Athena Client
+    // Bridge for cross-chain communication
+    INativeChainBridge public bridge;
+    
+    // Cross-chain settings - chain endpoints are now handled by the bridge
     uint32 public rewardsChainEid = 40161; // ETH Sepolia by default
     uint32 public athenaClientChainEid = 40231; // Arbitrum Sepolia by default
     
@@ -110,68 +133,33 @@ contract NativeAthena is OAppReceiver, OAppSender {
     
     // Events
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
+    event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     event EarnedTokensUsedForVoting(address indexed user, uint256 earnedTokens, string votingType);
     event CrossContractCallFailed(address indexed account, string reason);
     event DisputeFinalized(string indexed disputeId, bool winningSide, uint256 totalVotesFor, uint256 totalVotesAgainst);
     event DisputeRaised(string indexed jobId, address indexed disputeRaiser, uint256 fees);
     event SkillVerificationSubmitted(address indexed applicant, string targetOracleName, uint256 feeAmount);
     event AskAthenaSubmitted(address indexed applicant, string targetOracle, string fees);
-    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
-    event CrossChainGovernanceNotificationSent(address indexed user, string action, uint32 targetChain, uint256 fee);
-    event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
-    event AthenaClientChainEidUpdated(uint32 oldEid, uint32 newEid);
-    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
     event GovernanceActionReceivedFromNativeDAO(address indexed user, string action);
     event GovernanceActionForwardedToRewards(address indexed user, string action, uint256 fee);
+    event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
+    event AthenaClientChainEidUpdated(uint32 oldEid, uint32 newEid);
     
     modifier onlyDAO() {
         require(msg.sender == daoContract, "Only DAO can call this function");
         _;
     }
     
-    constructor(address _endpoint, address _owner, address _daoContract) OAppCore(_endpoint, _owner) Ownable(_owner) {
+    constructor(address _owner, address _daoContract, address _bridge) Ownable(_owner) {
         daoContract = _daoContract;
-    }
-
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
-    }
-
-    // Override to change fee check from equivalency to < since batch fees are cumulative
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value < _nativeFee) revert("Insufficient native fee");
-        return _nativeFee;
-    }
-
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        if (keccak256(bytes(functionName)) == keccak256(bytes("raiseDispute"))) {
-            (, string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) = abi.decode(_message, (string, string, string, string, uint256, address));
-            _handleRaiseDispute(jobId, disputeHash, oracleName, fee, disputeRaiser);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitSkillVerification"))) {
-            (, address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) = abi.decode(_message, (string, address, string, uint256, string));
-            _handleSubmitSkillVerification(applicant, applicationHash, feeAmount, targetOracleName);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("askAthena"))) {
-            (, address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) = abi.decode(_message, (string, address, string, string, string, string));
-            _handleAskAthena(applicant, description, hash, targetOracle, fees);
-        }
-        
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+        bridge = INativeChainBridge(_bridge);
     }
 
     // ==================== MESSAGE HANDLERS ====================
     
-    function _handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) internal {
+    function handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        
         // Check if oracle is active (has minimum required members)
         require(oracles[oracleName].members.length >= minOracleMembers, "Oracle not active");
         
@@ -196,7 +184,9 @@ contract NativeAthena is OAppReceiver, OAppSender {
         emit DisputeRaised(jobId, disputeRaiser, fee);
     }
     
-    function _handleSubmitSkillVerification(address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) internal {
+    function handleSubmitSkillVerification(address applicant, string memory applicationHash, uint256 feeAmount, string memory targetOracleName) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        
         skillApplications[applicationCounter] = SkillVerificationApplication({
             applicant: applicant,
             applicationHash: applicationHash,
@@ -212,7 +202,9 @@ contract NativeAthena is OAppReceiver, OAppSender {
         emit SkillVerificationSubmitted(applicant, targetOracleName, feeAmount);
     }
     
-    function _handleAskAthena(address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) internal {
+    function handleAskAthena(address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        
         askAthenaApplications[askAthenaCounter] = AskAthenaApplication({
             applicant: applicant,
             description: description,
@@ -227,6 +219,32 @@ contract NativeAthena is OAppReceiver, OAppSender {
         askAthenaCounter++;
         
         emit AskAthenaSubmitted(applicant, targetOracle, fees);
+    }
+    
+    // ==================== ADMIN FUNCTIONS ====================
+    
+    function setBridge(address _bridge) external onlyOwner {
+        address oldBridge = address(bridge);
+        bridge = INativeChainBridge(_bridge);
+        emit BridgeUpdated(oldBridge, _bridge);
+    }
+    
+    function setNOWJContract(address _nowjContract) external onlyOwner {
+        address oldContract = address(nowjContract);
+        nowjContract = INativeOpenWorkJobContract(_nowjContract);
+        emit NOWJContractUpdated(oldContract, _nowjContract);
+    }
+    
+    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
+        uint32 oldEid = rewardsChainEid;
+        rewardsChainEid = _rewardsChainEid;
+        emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
+    }
+    
+    function updateAthenaClientChainEid(uint32 _chainEid) external onlyOwner {
+        uint32 oldEid = athenaClientChainEid;
+        athenaClientChainEid = _chainEid;
+        emit AthenaClientChainEidUpdated(oldEid, _chainEid);
     }
     
     // ==================== LOCAL INTERFACE FOR NATIVE DAO ====================
@@ -246,12 +264,12 @@ contract NativeAthena is OAppReceiver, OAppSender {
         
         emit GovernanceActionReceivedFromNativeDAO(account, actionType);
         
-        // Forward to Rewards Contract on Ethereum
+        // Forward to Rewards Contract via bridge
         _sendGovernanceNotificationToRewards(account, actionType, _rewardsOptions);
     }
     
     /**
-     * @notice Send governance notification to Rewards Contract
+     * @notice Send governance notification to Rewards Contract via bridge
      * @param account Address of the user
      * @param actionType Type of action
      * @param _rewardsOptions LayerZero options
@@ -261,42 +279,24 @@ contract NativeAthena is OAppReceiver, OAppSender {
         string memory actionType,
         bytes calldata _rewardsOptions
     ) internal {
-        if (rewardsChainEid == 0) return;
+        if (address(bridge) == address(0)) return;
         
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
         
-        MessagingFee memory fee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
+        uint256 fee = 0;
+        try bridge.quoteRewardsChain(payload, _rewardsOptions) returns (uint256 quotedFee) {
+            fee = quotedFee;
+        } catch {
+            return;
+        }
         
-        _lzSend(
-            rewardsChainEid,
-            payload,
-            _rewardsOptions,
-            fee,
-            payable(msg.sender)
-        );
-        
-        emit GovernanceActionForwardedToRewards(account, actionType, fee.nativeFee);
-        emit CrossChainMessageSent("notifyGovernanceAction", rewardsChainEid, payload);
-    }
-    
-    // ==================== CONTRACT SETUP FUNCTIONS ====================
-    
-    function setNOWJContract(address _nowjContract) external onlyOwner {
-        address oldContract = address(nowjContract);
-        nowjContract = INativeOpenWorkJobContract(_nowjContract);
-        emit NOWJContractUpdated(oldContract, _nowjContract);
-    }
-    
-    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
-        uint32 oldEid = rewardsChainEid;
-        rewardsChainEid = _rewardsChainEid;
-        emit RewardsChainEidUpdated(oldEid, _rewardsChainEid);
-    }
-    
-    function updateAthenaClientChainEid(uint32 _chainEid) external onlyOwner {
-        uint32 oldEid = athenaClientChainEid;
-        athenaClientChainEid = _chainEid;
-        emit AthenaClientChainEidUpdated(oldEid, _chainEid);
+        if (fee > 0 && msg.value >= fee) {
+            try bridge.sendToRewardsChain{value: fee}("notifyGovernanceAction", payload, _rewardsOptions) {
+                emit GovernanceActionForwardedToRewards(account, actionType, fee);
+            } catch {
+                // Silent fail
+            }
+        }
     }
     
     // ==================== VOTING ELIGIBILITY FUNCTIONS ====================
@@ -426,33 +426,11 @@ contract NativeAthena is OAppReceiver, OAppSender {
         skillVerificationDates[application.targetOracleName][application.applicant] = block.timestamp;
     }
     
-    // ==================== DIRECT SUBMISSION FUNCTIONS (for local use) ====================
-    
-    function raiseDispute(
-        string memory _jobId,
-        string memory _disputeHash,
-        string memory _oracleName,
-        uint256 _fee
-    ) external {
-        _handleRaiseDispute(_jobId, _disputeHash, _oracleName, _fee, msg.sender);
-    }
-    
-    function submitSkillVerification(
-        string memory _applicationHash,
-        uint256 _feeAmount,
-        string memory _targetOracleName
-    ) external {
-        _handleSubmitSkillVerification(msg.sender, _applicationHash, _feeAmount, _targetOracleName);
-    }
-
-    function askAthena(
-        string memory _description,
-        string memory _hash,
-        string memory _targetOracle,
-        string memory _fees
-    ) external {
-        _handleAskAthena(msg.sender, _description, _hash, _targetOracle, _fees);
-    }
+    // ==================== NOTE: DIRECT SUBMISSION REMOVED ====================
+    // Direct submission functions removed to maintain proper cross-chain architecture.
+    // All dispute raising, skill verification, and ask athena submissions should come 
+    // through the bridge from other chains (AthenaClient, LOWJC, etc.).
+    // Local submissions would bypass the fee collection and cross-chain flow.
     
     // ==================== UPDATED VOTING FUNCTIONS ====================
     
@@ -474,26 +452,28 @@ contract NativeAthena is OAppReceiver, OAppSender {
         
         // Calculate fees for cross-chain calls upfront
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        MessagingFee memory rewardsFee = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
-        uint256 rewardsFeeCost = rewardsFee.nativeFee;
+        uint256 rewardsFeeCost = 0;
+        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
+            rewardsFeeCost = fee;
+        } catch {}
         
         // All voting types now send to Athena Client for fee distribution
         bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        MessagingFee memory athenaFee = _quote(athenaClientChainEid, athenaPayload, _athenaClientOptions, false);
-        uint256 athenaClientFeeCost = athenaFee.nativeFee;
+        uint256 athenaClientFeeCost = 0;
+        try bridge.quoteAthenaClientChain(athenaPayload, _athenaClientOptions) returns (uint256 fee) {
+            athenaClientFeeCost = fee;
+        } catch {}
         
         uint256 totalFeeCost = rewardsFeeCost + athenaClientFeeCost;
         require(msg.value >= totalFeeCost, "Insufficient fee provided");
         
         // Send to rewards contract first (governance notification)
-        if (rewardsChainEid != 0) {
-            _lzSend(
-                rewardsChainEid,
-                rewardsPayload,
-                _rewardsOptions,
-                MessagingFee(rewardsFeeCost, 0),
-                payable(msg.sender)
-            );
+        if (rewardsFeeCost > 0) {
+            try bridge.sendToRewardsChain{value: rewardsFeeCost}("notifyGovernanceAction", rewardsPayload, _rewardsOptions) {
+                // Success
+            } catch {
+                // Silent fail
+            }
         }
         
         // Emit event if user is using earned tokens (no active stake above threshold)
@@ -536,18 +516,14 @@ contract NativeAthena is OAppReceiver, OAppSender {
         }
         
         // Notify AthenaClient about the vote for fee distribution using pre-calculated fee
-        if (athenaClientChainEid != 0) {
+        if (nativeFee > 0) {
             bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
             
-            _lzSend(
-                athenaClientChainEid,
-                payload,
-                _options,
-                MessagingFee(nativeFee, 0),
-                payable(msg.sender)
-            );
-            
-            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
+            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
+                // Success
+            } catch {
+                // Silent fail
+            }
         }
     }
     
@@ -569,18 +545,14 @@ contract NativeAthena is OAppReceiver, OAppSender {
         }
         
         // Notify AthenaClient about the vote for fee distribution
-        if (athenaClientChainEid != 0) {
+        if (nativeFee > 0) {
             bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
             
-            _lzSend(
-                athenaClientChainEid,
-                payload,
-                _options,
-                MessagingFee(nativeFee, 0),
-                payable(msg.sender)
-            );
-            
-            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
+            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
+                // Success
+            } catch {
+                // Silent fail
+            }
         }
     }
     
@@ -602,18 +574,14 @@ contract NativeAthena is OAppReceiver, OAppSender {
         }
         
         // Notify AthenaClient about the vote for fee distribution
-        if (athenaClientChainEid != 0) {
+        if (nativeFee > 0) {
             bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
             
-            _lzSend(
-                athenaClientChainEid,
-                payload,
-                _options,
-                MessagingFee(nativeFee, 0),
-                payable(msg.sender)
-            );
-            
-            emit CrossChainMessageSent("recordVote", athenaClientChainEid, payload);
+            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
+                // Success
+            } catch {
+                // Silent fail
+            }
         }
     }
     
@@ -634,16 +602,13 @@ contract NativeAthena is OAppReceiver, OAppSender {
         // Send simplified cross-chain message to AthenaClient with only the winning side
         bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
         
-        _lzSend(
-            athenaClientChainEid,
-            payload,
-            _athenaClientOptions,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
+        try bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions) {
+            // Success
+        } catch {
+            // Silent fail
+        }
         
         emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
-        emit CrossChainMessageSent("finalizeDispute", athenaClientChainEid, payload);
     }
     
     // ==================== QUOTE FUNCTIONS ====================
@@ -652,15 +617,14 @@ contract NativeAthena is OAppReceiver, OAppSender {
         address account,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        if (rewardsChainEid == 0) return 0;
+        if (address(bridge) == address(0)) return 0;
         
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _options, false);
-        return msgFee.nativeFee;
+        return bridge.quoteRewardsChain(payload, _options);
     }
     
     function quoteVoteFees(
-        VotingType _votingType,
+        VotingType /* _votingType */,
         string memory _disputeId,
         address _claimAddress,
         bool _voteFor,
@@ -672,16 +636,17 @@ contract NativeAthena is OAppReceiver, OAppSender {
         
         // Calculate rewards fee
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        MessagingFee memory rewardsMsg = _quote(rewardsChainEid, rewardsPayload, _rewardsOptions, false);
-        rewardsFee = rewardsMsg.nativeFee;
+        rewardsFee = 0;
+        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
+            rewardsFee = fee;
+        } catch {}
         
         // Calculate athena client fee for all voting types
         athenaClientFee = 0;
-        if (athenaClientChainEid != 0) {
-            bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-            MessagingFee memory athenaMsg = _quote(athenaClientChainEid, athenaPayload, _athenaClientOptions, false);
-            athenaClientFee = athenaMsg.nativeFee;
-        }
+        bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+        try bridge.quoteAthenaClientChain(athenaPayload, _athenaClientOptions) returns (uint256 fee) {
+            athenaClientFee = fee;
+        } catch {}
         
         totalFee = rewardsFee + athenaClientFee;
     }
@@ -690,11 +655,10 @@ contract NativeAthena is OAppReceiver, OAppSender {
         address account,
         bytes calldata _rewardsOptions
     ) external view returns (uint256 fee) {
-        if (rewardsChainEid == 0) return 0;
+        if (address(bridge) == address(0)) return 0;
         
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        MessagingFee memory msgFee = _quote(rewardsChainEid, payload, _rewardsOptions, false);
-        return msgFee.nativeFee;
+        return bridge.quoteRewardsChain(payload, _rewardsOptions);
     }
     
     // ==================== UTILITY FUNCTIONS ====================
@@ -776,4 +740,15 @@ contract NativeAthena is OAppReceiver, OAppSender {
     function getAskAthenaApplication(uint256 _applicationId) external view returns (AskAthenaApplication memory) {
         return askAthenaApplications[_applicationId];
     }
+    
+    // ==================== EMERGENCY FUNCTIONS ====================
+    
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No balance to withdraw");
+        payable(owner()).transfer(balance);
+    }
+    
+    // Allow contract to receive ETH for paying LayerZero fees
+    receive() external payable {}
 }

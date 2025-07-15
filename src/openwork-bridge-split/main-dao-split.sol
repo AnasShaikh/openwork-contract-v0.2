@@ -20,20 +20,17 @@ interface IRewardsContract {
         uint256 cumulativeEarnings,
         uint256 totalJobTokens
     );
-    function sendStakeUpdateCrossChain(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
+}
+
+interface IThirdChainBridge {
+    function sendToNativeChain(
+        string memory _functionName,
+        bytes memory _payload,
         bytes calldata _options
     ) external payable;
-    function quoteStakeUpdate(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
+    
+    function quoteNativeChain(
+        bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee);
 }
@@ -41,6 +38,7 @@ interface IRewardsContract {
 contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable, ReentrancyGuard {
     IERC20 public openworkToken;
     IRewardsContract public rewardsContract;
+    IThirdChainBridge public bridge;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     uint32 public immutable chainId;
     
@@ -84,6 +82,7 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     event EarnerUpdated(address indexed earner, uint256 newBalance, uint256 governanceActionsDeprecated, uint256 cumulativeEarnings);
     event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
     event RewardsContractUpdated(address indexed newRewardsContract);
+    event BridgeUpdated(address indexed newBridge);
     event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
     event StakeDataSentCrossChain(address indexed staker, bool isActive, uint256 fee);
     event StakeDataReceivedFromRewards(address indexed staker, uint256 amount, bool isActive);
@@ -91,7 +90,8 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     constructor(
         address _owner,
         address _openworkToken,
-        uint32 _chainId
+        uint32 _chainId,
+        address _bridge
     ) 
         Governor("OpenWorkDAO")
         GovernorSettings(
@@ -103,34 +103,19 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
     {
         openworkToken = IERC20(_openworkToken);
         chainId = _chainId;
+        bridge = IThirdChainBridge(_bridge);
     }
     
-    // ==================== ADMIN FUNCTIONS ====================
+    // ==================== MESSAGE HANDLERS ====================
     
-    function setRewardsContract(address _rewardsContract) external onlyOwner {
-        require(_rewardsContract != address(0), "Invalid rewards contract address");
-        rewardsContract = IRewardsContract(_rewardsContract);
-        emit RewardsContractUpdated(_rewardsContract);
-    }
-    
-    // ==================== LOCAL INTERFACE FOR REWARDS CONTRACT ====================
-    
-    /**
-     * @notice Function for Rewards Contract to update stake data (called locally)
-     * @param staker Address of the staker
-     * @param amount Stake amount
-     * @param unlockTime When stake unlocks
-     * @param durationMinutes Stake duration
-     * @param isActive Whether stake is active
-     */
-    function updateStakeDataFromRewards(
+    function handleUpdateStakeDataFromRewards(
         address staker,
         uint256 amount,
         uint256 unlockTime,
         uint256 durationMinutes,
         bool isActive
     ) external {
-        require(msg.sender == address(rewardsContract), "Only Rewards Contract can call this");
+        require(msg.sender == address(bridge), "Only bridge can call this function");
         
         stakes[staker] = Stake({
             amount: amount,
@@ -149,10 +134,24 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         emit StakeDataReceivedFromRewards(staker, amount, isActive);
     }
     
-    // ==================== CROSS-CHAIN MESSAGING VIA REWARDS CONTRACT ====================
+    // ==================== ADMIN FUNCTIONS ====================
+    
+    function setRewardsContract(address _rewardsContract) external onlyOwner {
+        require(_rewardsContract != address(0), "Invalid rewards contract address");
+        rewardsContract = IRewardsContract(_rewardsContract);
+        emit RewardsContractUpdated(_rewardsContract);
+    }
+    
+    function setBridge(address _bridge) external onlyOwner {
+        require(_bridge != address(0), "Invalid bridge address");
+        bridge = IThirdChainBridge(_bridge);
+        emit BridgeUpdated(_bridge);
+    }
+    
+    // ==================== CROSS-CHAIN MESSAGING VIA BRIDGE ====================
     
     /**
-     * @notice Send stake data cross-chain via Rewards Contract
+     * @notice Send stake data cross-chain via Bridge
      * @param staker Address of the staker
      * @param isActive Whether stake is active
      * @param _options LayerZero options for the message
@@ -162,32 +161,34 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         bool isActive,
         bytes memory _options
     ) internal {
-        if (address(rewardsContract) == address(0)) return;
+        if (address(bridge) == address(0)) return;
         
         Stake memory userStake = stakes[staker];
         
-        // Get fee quote from Rewards Contract
-        uint256 fee = rewardsContract.quoteStakeUpdate(
+        // Get fee quote from Bridge
+        bytes memory payload = abi.encode(
+            "updateStakeData",
             staker,
             userStake.amount,
             userStake.unlockTime,
             userStake.durationMinutes,
-            isActive,
-            _options
+            isActive
         );
         
-        // Send via Rewards Contract
-        if (fee > 0) {
-            rewardsContract.sendStakeUpdateCrossChain{value: fee}(
-                staker,
-                userStake.amount,
-                userStake.unlockTime,
-                userStake.durationMinutes,
-                isActive,
-                _options
-            );
-            
-            emit StakeDataSentCrossChain(staker, isActive, fee);
+        uint256 fee = 0;
+        try bridge.quoteNativeChain(payload, _options) returns (uint256 quotedFee) {
+            fee = quotedFee;
+        } catch {
+            return;
+        }
+        
+        // Send via Bridge if fee is available
+        if (fee > 0 && address(this).balance >= fee) {
+            try bridge.sendToNativeChain{value: fee}("updateStakeData", payload, _options) {
+                emit StakeDataSentCrossChain(staker, isActive, fee);
+            } catch {
+                // Silent fail to avoid blocking other operations
+            }
         }
     }
     
@@ -243,7 +244,7 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         
         emit StakeCreated(msg.sender, amount, durationMinutes);
         
-        // Send stake data cross-chain via Rewards Contract
+        // Send stake data cross-chain via Bridge
         _sendStakeDataCrossChain(msg.sender, true, _options);
     }
     
@@ -271,7 +272,7 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
             
             emit UnstakeCompleted(msg.sender, stakeAmount);
             
-            // Send updated stake data (inactive) cross-chain via Rewards Contract
+            // Send updated stake data (inactive) cross-chain via Bridge
             _sendStakeDataCrossChain(msg.sender, false, _options);
         }
     }
@@ -294,7 +295,7 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         
         emit StakeRemoved(staker, removeAmount);
         
-        // Send updated stake data cross-chain via Rewards Contract
+        // Send updated stake data cross-chain via Bridge
         _sendStakeDataCrossChain(staker, isActive, _options);
     }
     
@@ -493,17 +494,18 @@ contract MainDAO is Governor, GovernorSettings, GovernorCountingSimple, Ownable,
         bool isActive,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        if (address(rewardsContract) == address(0)) return 0;
+        if (address(bridge) == address(0)) return 0;
         
         Stake memory userStake = stakes[staker];
-        return rewardsContract.quoteStakeUpdate(
+        bytes memory payload = abi.encode(
+            "updateStakeData",
             staker,
             userStake.amount,
             userStake.unlockTime,
             userStake.durationMinutes,
-            isActive,
-            _options
+            isActive
         );
+        return bridge.quoteNativeChain(payload, _options);
     }
     
     // ==================== GOVERNANCE ADMIN FUNCTIONS ====================

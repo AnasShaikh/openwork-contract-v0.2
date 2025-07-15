@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
@@ -14,7 +10,7 @@ interface IERC20 {
 }
 
 interface IMainDAO {
-    function updateStakeDataFromRewards(
+    function handleUpdateStakeDataFromRewards(
         address staker,
         uint256 amount,
         uint256 unlockTime,
@@ -23,9 +19,23 @@ interface IMainDAO {
     ) external;
 }
 
-contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard {
+interface IThirdChainBridge {
+    function sendToNativeChain(
+        string memory _functionName,
+        bytes memory _payload,
+        bytes calldata _options
+    ) external payable;
+    
+    function quoteNativeChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee);
+}
+
+contract CrossChainRewardsContract is Ownable, ReentrancyGuard {
     IERC20 public openworkToken;
     IMainDAO public mainDAO;
+    IThirdChainBridge public bridge;
     
     // User referrer mapping
     mapping(address => address) public userReferrers;
@@ -63,9 +73,6 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     mapping(uint32 => bool) public authorizedChains;
     mapping(uint32 => string) public chainNames;
     
-    // NEW: Chain endpoints for hub functionality
-    uint32 public nativeChainEid;     // Chain where Native Athena is deployed (Optimism)
-    
     // Events
     event ProfileCreated(address indexed user, address indexed referrer, uint32 indexed sourceChain);
     event PaymentProcessed(
@@ -87,97 +94,64 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     event CrossChainGovernanceActionReceived(address indexed user, uint32 indexed sourceChain, uint256 newActionCount);
     event PlatformTotalUpdated(uint256 newTotal);
     event ContractUpdated(string contractType, address newAddress);
-    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
     event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized, string chainName);
     event StakeDataForwarded(address indexed staker, bool isActive);
-    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
+    event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     
-    constructor(address _endpoint, address _owner, address _openworkToken) OAppCore(_endpoint, _owner) Ownable(_owner) {
+    constructor(address _owner, address _openworkToken, address _bridge) Ownable(_owner) {
         openworkToken = IERC20(_openworkToken);
+        bridge = IThirdChainBridge(_bridge);
         _initializeRewardBands();
         _initializeGovernanceRewardBands();
         _initializeAuthorizedChains();
     }
 
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
-    }
-
-    // Override to change fee check from equivalency to < since batch fees are cumulative
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value < _nativeFee) revert("Insufficient native fee");
-        return _nativeFee;
-    }
-
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-    /**
-     * @notice Handle incoming LayerZero messages
-     * @param _origin Origin information containing source chain and sender
-     * @param _message Encoded function call data
-     */
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        // Check if the source chain is authorized
-        require(authorizedChains[_origin.srcEid], "Unauthorized source chain");
-        
-        // Decode function name and route to appropriate handler
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        if (keccak256(bytes(functionName)) == keccak256("createProfile")) {
-            _handleCreateProfile(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256("updateRewardsOnPayment")) {
-            _handleUpdateRewardsOnPayment(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256("notifyGovernanceAction")) {
-            _handleGovernanceActionNotification(_message, _origin.srcEid);
-        } else if (keccak256(bytes(functionName)) == keccak256("updateStakeData")) {
-            // NEW: Handle stake updates and forward to Main DAO
-            _handleStakeDataUpdate(_message, _origin.srcEid);
-        } else {
-            revert("Unknown function");
-        }
-    }
-    
     // ==================== MESSAGE HANDLERS ====================
     
-    function _handleCreateProfile(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address user, address referrer) = abi.decode(_message, (string, address, address));
-        _createProfile(user, referrer, _sourceChain);
-        emit CrossChainMessageReceived("createProfile", _sourceChain, _message);
+    function handleCreateProfile(address user, address referrer, uint32 sourceChain) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        _createProfile(user, referrer, sourceChain);
     }
     
-    function _handleUpdateRewardsOnPayment(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address jobGiver, address jobTaker, uint256 amount) = abi.decode(_message, (string, address, address, uint256));
+    function handleUpdateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount, uint32 /* sourceChain */) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
         _updateRewardsOnPayment(jobGiver, jobTaker, amount);
-        emit CrossChainMessageReceived("updateRewardsOnPayment", _sourceChain, _message);
     }
     
-    function _handleGovernanceActionNotification(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address account) = abi.decode(_message, (string, address));
-        _notifyGovernanceActionCrossChain(account, _sourceChain);
-        emit CrossChainMessageReceived("notifyGovernanceAction", _sourceChain, _message);
+    function handleGovernanceActionNotification(address account, uint32 sourceChain) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        _notifyGovernanceActionCrossChain(account, sourceChain);
     }
     
-    // NEW: Handle stake updates and forward to Main DAO
-    function _handleStakeDataUpdate(bytes calldata _message, uint32 _sourceChain) internal {
-        (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
+    function handleStakeDataUpdate(address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive, uint32 /* sourceChain */) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
         
         // Forward to Main DAO locally
         if (address(mainDAO) != address(0)) {
-            try mainDAO.updateStakeDataFromRewards(staker, amount, unlockTime, durationMinutes, isActive) {
+            try mainDAO.handleUpdateStakeDataFromRewards(staker, amount, unlockTime, durationMinutes, isActive) {
                 emit StakeDataForwarded(staker, isActive);
             } catch {
                 // Log error but don't revert to avoid blocking other messages
             }
         }
-        
-        emit CrossChainMessageReceived("updateStakeData", _sourceChain, _message);
+    }
+    
+    // ==================== ADMIN FUNCTIONS ====================
+    
+    function setBridge(address _bridge) external onlyOwner {
+        address oldBridge = address(bridge);
+        bridge = IThirdChainBridge(_bridge);
+        emit BridgeUpdated(oldBridge, _bridge);
+    }
+    
+    function setOpenworkToken(address _token) external onlyOwner {
+        openworkToken = IERC20(_token);
+        emit ContractUpdated("OpenworkToken", _token);
+    }
+    
+    function setMainDAO(address _mainDAO) external onlyOwner {
+        mainDAO = IMainDAO(_mainDAO);
+        emit ContractUpdated("MainDAO", _mainDAO);
     }
     
     // ==================== CROSS-CHAIN SETUP FUNCTIONS ====================
@@ -201,24 +175,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         emit AuthorizedChainUpdated(_chainEid, _authorized, _chainName);
     }
     
-    // NEW: Set Native Chain EID for sending stake updates
-    function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
-        nativeChainEid = _nativeChainEid;
-    }
-    
-    // CONTRACT SETUP FUNCTIONS
-    
-    function setOpenworkToken(address _token) external onlyOwner {
-        openworkToken = IERC20(_token);
-        emit ContractUpdated("OpenworkToken", _token);
-    }
-    
-    function setMainDAO(address _mainDAO) external onlyOwner {
-        mainDAO = IMainDAO(_mainDAO);
-        emit ContractUpdated("MainDAO", _mainDAO);
-    }
-    
-    // REWARD BANDS INITIALIZATION
+    // ==================== REWARD BANDS INITIALIZATION ====================
     
     function _initializeRewardBands() private {
         // Job-based reward bands
@@ -268,7 +225,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         governanceRewardBands.push(GovernanceRewardBand(131072000 * 1e18, 262144000 * 1e18, 19 * 1e16));
     }
     
-    // INTERNAL CORE FUNCTIONS (called by message handlers)
+    // ==================== INTERNAL CORE FUNCTIONS ====================
     
     function _createProfile(address user, address referrer, uint32 sourceChain) internal {
         require(user != address(0), "Invalid user address");
@@ -370,7 +327,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         return totalTokens;
     }
     
-    // GOVERNANCE REWARDS FUNCTIONS
+    // ==================== GOVERNANCE REWARDS FUNCTIONS ====================
     
     function notifyGovernanceAction(address account) external {
         governanceActionCount[account]++;
@@ -448,7 +405,8 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         emit GovernanceRewardsClaimed(msg.sender, claimableAmount);
     }
 
-    // NEW: Function for Main DAO to send stake updates cross-chain
+    // ==================== CROSS-CHAIN STAKE UPDATE FUNCTIONS ====================
+    
     function sendStakeUpdateCrossChain(
         address staker,
         uint256 amount,
@@ -458,7 +416,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         bytes calldata _options
     ) external payable {
         require(msg.sender == address(mainDAO), "Only Main DAO can send stake updates");
-        require(nativeChainEid != 0, "Native chain EID not set");
+        require(address(bridge) != address(0), "Bridge not set");
         
         bytes memory payload = abi.encode(
             "updateStakeData",
@@ -469,18 +427,31 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
             isActive
         );
         
-        _lzSend(
-            nativeChainEid,
-            payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent("updateStakeData", nativeChainEid, payload);
+        bridge.sendToNativeChain{value: msg.value}("updateStakeData", payload, _options);
     }
     
-    // VIEW FUNCTIONS
+    function quoteStakeUpdate(
+        address staker,
+        uint256 amount,
+        uint256 unlockTime,
+        uint256 durationMinutes,
+        bool isActive,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        if (address(bridge) == address(0)) return 0;
+        
+        bytes memory payload = abi.encode(
+            "updateStakeData",
+            staker,
+            amount,
+            unlockTime,
+            durationMinutes,
+            isActive
+        );
+        return bridge.quoteNativeChain(payload, _options);
+    }
+    
+    // ==================== VIEW FUNCTIONS ====================
     
     function getUserJobRewardInfo(address user) external view returns (
         uint256 cumulativeEarnings,
@@ -593,34 +564,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
         return chainNames[chainEid];
     }
     
-    function getNativeChainEid() external view returns (uint32) {
-        return nativeChainEid;
-    }
-    
-    // NEW: Quote function for stake updates
-    function quoteStakeUpdate(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        if (nativeChainEid == 0) return 0;
-        
-        bytes memory payload = abi.encode(
-            "updateStakeData",
-            staker,
-            amount,
-            unlockTime,
-            durationMinutes,
-            isActive
-        );
-        MessagingFee memory msgFee = _quote(nativeChainEid, payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
-    // ADMIN FUNCTIONS
+    // ==================== ADMIN FUNCTIONS ====================
     
     function updatePlatformTotal(uint256 newTotal) external onlyOwner {
         require(newTotal >= currentTotalPlatformPayments, "Cannot decrease platform total");
@@ -642,4 +586,7 @@ contract CrossChainRewardsContract is OAppReceiver, OAppSender, ReentrancyGuard 
     function emergencyWithdraw(uint256 amount) external onlyOwner {
         require(openworkToken.transfer(owner(), amount), "Token transfer failed");
     }
+    
+    // Allow contract to receive ETH for paying LayerZero fees
+    receive() external payable {}
 }

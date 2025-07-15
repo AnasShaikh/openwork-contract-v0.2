@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OAppReceiver } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppReceiver.sol";
-import { OAppSender, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.sol";
-import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
-import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 interface ILocalOpenWorkJobContract {
     enum JobStatus { Open, InProgress, Completed, Cancelled }
@@ -42,15 +36,26 @@ struct Job {
     function resolveDispute(string memory jobId, bool jobGiverWins) external;
 }
 
-contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
+interface ILayerZeroBridge {
+    function sendToNativeChain(
+        string memory _functionName,
+        bytes memory _payload,
+        bytes calldata _options
+    ) external payable;
+    
+    function quoteNativeChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee);
+}
+
+contract AthenaClientContract is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
     
     IERC20 public immutable usdtToken;
     ILocalOpenWorkJobContract public jobContract;
+    ILayerZeroBridge public bridge;
     uint32 public immutable chainId;
-    
-    // Chain endpoints for cross-chain communication
-    uint32 public nativeChainEid;     // Chain where NativeAthena is deployed
     
     struct VoteRecord {
         address voter;
@@ -81,103 +86,68 @@ contract AthenaClientContract is OAppSender, OAppReceiver, ReentrancyGuard {
     event AthenaAsked(address indexed caller, string targetOracle, uint256 feeAmount);
     event FeesWithdrawn(address indexed owner, uint256 amount);
     event JobContractSet(address indexed jobContract);
+    event BridgeSet(address indexed bridge);
     event MinDisputeFeeSet(uint256 newMinFee);
     event VoteRecorded(string indexed disputeId, address indexed voter, address indexed claimAddress, uint256 votingPower, bool voteFor);
     event DisputeFeesFinalized(string indexed disputeId, bool winningSide, uint256 totalFees);
     event FeesClaimed(string indexed disputeId, address indexed claimAddress, uint256 amount);
-    event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
-    event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
-    event NativeChainUpdated(uint32 newChainEid);
     
     constructor(
-        address _endpoint,
         address _owner,
         address _usdtToken,
         uint32 _chainId,
-        uint32 _nativeChainEid
-    ) OAppCore(_endpoint, _owner) Ownable(_owner) {
+        address _bridge
+    ) Ownable(_owner) {
         usdtToken = IERC20(_usdtToken);
         chainId = _chainId;
-        nativeChainEid = _nativeChainEid;
+        bridge = ILayerZeroBridge(_bridge);
     }
-    
-    // Override the conflicting oAppVersion function
-    function oAppVersion() public pure override(OAppReceiver, OAppSender) returns (uint64 senderVersion, uint64 receiverVersion) {
-        return (1, 1);
-    }
-    
-    // Override to change fee check from equivalency to < since batch fees are cumulative
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value < _nativeFee) revert("Insufficient native fee");
-        return _nativeFee;
-    }
-    
-    // ==================== LAYERZERO MESSAGE HANDLING ====================
-    
-   function _lzReceive(
-    Origin calldata _origin,
-    bytes32, // _guid (not used)
-    bytes calldata _message,
-    address, // _executor (not used)
-    bytes calldata // _extraData (not used)
-) internal override {
-    (string memory functionName) = abi.decode(_message, (string));
-    
-    if (keccak256(bytes(functionName)) == keccak256(bytes("finalizeDispute"))) {
-        // Simplified: only receive disputeId and winningSide
-        (, string memory disputeId, bool winningSide) = abi.decode(_message, (string, string, bool));
-        _handleFinalizeDispute(disputeId, winningSide);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("recordVote"))) {
-        (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) = abi.decode(_message, (string, string, address, address, uint256, bool));
-        _handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
-    }
-    
-    emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
-}
     
     // ==================== MESSAGE HANDLERS ====================
     
-function _handleFinalizeDispute(string memory disputeId, bool winningSide) internal {
-    require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
-    require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
-    
-    DisputeFees storage dispute = disputeFees[disputeId];
-    dispute.winningSide = winningSide;
-    dispute.isFinalized = true;
-    
-    // Distribute fees automatically using locally stored vote data
-    if (dispute.votes.length > 0) {
-        uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
+    function handleFinalizeDispute(string memory disputeId, bool winningSide) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
+        require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
+        require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
         
-        if (totalWinningVotingPower > 0) {
-            for (uint256 i = 0; i < dispute.votes.length; i++) {
-                VoteRecord memory vote = dispute.votes[i];
-                
-                if (vote.voteFor == winningSide) {
-                    uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
+        DisputeFees storage dispute = disputeFees[disputeId];
+        dispute.winningSide = winningSide;
+        dispute.isFinalized = true;
+        
+        // Distribute fees automatically using locally stored vote data
+        if (dispute.votes.length > 0) {
+            uint256 totalWinningVotingPower = winningSide ? dispute.totalVotingPowerFor : dispute.totalVotingPowerAgainst;
+            
+            if (totalWinningVotingPower > 0) {
+                for (uint256 i = 0; i < dispute.votes.length; i++) {
+                    VoteRecord memory vote = dispute.votes[i];
                     
-                    // Store for reference
-                    claimableAmount[disputeId][vote.claimAddress] = voterShare;
-                    // Mark as automatically claimed
-                    hasClaimed[disputeId][vote.claimAddress] = true;
-                    
-                    // Automatically transfer
-                    require(usdtToken.transfer(vote.claimAddress, voterShare), "Fee transfer failed");
-                    emit FeesClaimed(disputeId, vote.claimAddress, voterShare);
+                    if (vote.voteFor == winningSide) {
+                        uint256 voterShare = (vote.votingPower * dispute.totalFees) / totalWinningVotingPower;
+                        
+                        // Store for reference
+                        claimableAmount[disputeId][vote.claimAddress] = voterShare;
+                        // Mark as automatically claimed
+                        hasClaimed[disputeId][vote.claimAddress] = true;
+                        
+                        // Automatically transfer
+                        require(usdtToken.transfer(vote.claimAddress, voterShare), "Fee transfer failed");
+                        emit FeesClaimed(disputeId, vote.claimAddress, voterShare);
+                    }
                 }
             }
         }
+        
+        // AUTO-RESOLVE THE DISPUTE IN LOWJC
+        if (address(jobContract) != address(0)) {
+            jobContract.resolveDispute(disputeId, winningSide);
+        }
+        
+        emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
     }
     
-    // AUTO-RESOLVE THE DISPUTE IN LOWJC
-    if (address(jobContract) != address(0)) {
-        jobContract.resolveDispute(disputeId, winningSide);
-    }
-    
-    emit DisputeFeesFinalized(disputeId, winningSide, dispute.totalFees);
-}
-    
-    function _handleRecordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) internal {
+    function handleRecordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external {
+        require(msg.sender == address(bridge), "Only bridge can call this function");
         require(disputeFees[disputeId].totalFees > 0, "Dispute does not exist");
         require(!disputeFees[disputeId].isFinalized, "Dispute already finalized");
         
@@ -199,12 +169,12 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         emit VoteRecorded(disputeId, voter, claimAddress, votingPower, voteFor);
     }
     
-    /**
-     * @notice Update native chain endpoint (admin function)
-     */
-    function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
-        nativeChainEid = _nativeChainEid;
-        emit NativeChainUpdated(_nativeChainEid);
+    // ==================== ADMIN FUNCTIONS ====================
+    
+    function setBridge(address _bridge) external onlyOwner {
+        require(_bridge != address(0), "Bridge address cannot be zero");
+        bridge = ILayerZeroBridge(_bridge);
+        emit BridgeSet(_bridge);
     }
     
     function setJobContract(address _jobContract) external onlyOwner {
@@ -217,6 +187,8 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         minDisputeFee = _minFee;
         emit MinDisputeFeeSet(_minFee);
     }
+    
+    // ==================== MAIN FUNCTIONS ====================
     
     function raiseDispute(
         string memory _jobId,
@@ -261,20 +233,11 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         // Mark dispute as existing for this job
         jobDisputeExists[_jobId] = true;
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
-        
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount, msg.sender);
-        _lzSend(
-            nativeChainEid,
-            payload,
-            _nativeOptions,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
+        bridge.sendToNativeChain{value: msg.value}("raiseDispute", payload, _nativeOptions);
         
         emit DisputeRaised(msg.sender, _jobId, _feeAmount);
-        emit CrossChainMessageSent("raiseDispute", nativeChainEid, payload);
     }
     
     function submitSkillVerification(
@@ -291,20 +254,11 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
             "USDT transfer failed"
         );
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
-        
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("submitSkillVerification", msg.sender, _applicationHash, _feeAmount, _targetOracleName);
-        _lzSend(
-            nativeChainEid,
-            payload,
-            _nativeOptions,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
+        bridge.sendToNativeChain{value: msg.value}("submitSkillVerification", payload, _nativeOptions);
         
         emit SkillVerificationSubmitted(msg.sender, _targetOracleName, _feeAmount);
-        emit CrossChainMessageSent("submitSkillVerification", nativeChainEid, payload);
     }
     
     function askAthena(
@@ -325,23 +279,14 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
             "USDT transfer failed"
         );
         
-        // REMOVED: Local SkillOracle call - only do cross-chain communication
-        
         // Send cross-chain message to Native Athena
         bytes memory payload = abi.encode("askAthena", msg.sender, _description, _hash, _targetOracle, feeString);
-        _lzSend(
-            nativeChainEid,
-            payload,
-            _nativeOptions,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
+        bridge.sendToNativeChain{value: msg.value}("askAthena", payload, _nativeOptions);
         
         emit AthenaAsked(msg.sender, _targetOracle, _feeAmount);
-        emit CrossChainMessageSent("askAthena", nativeChainEid, payload);
     }
     
-
+    // ==================== VIEW FUNCTIONS ====================
     
     // View function to get claimable amount for an address
     function getClaimableAmount(string memory disputeId, address claimAddress) external view returns (uint256) {
@@ -371,29 +316,6 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         );
     }
     
-    // Utility function to convert uint to string
-    function uint2str(uint256 _i) internal pure returns (string memory) {
-        if (_i == 0) {
-            return "0";
-        }
-        uint256 j = _i;
-        uint256 len;
-        while (j != 0) {
-            len++;
-            j /= 10;
-        }
-        bytes memory bstr = new bytes(len);
-        uint256 k = len;
-        while (_i != 0) {
-            k = k - 1;
-            uint8 temp = (48 + uint8(_i - _i / 10 * 10));
-            bytes1 b1 = bytes1(temp);
-            bstr[k] = b1;
-            _i /= 10;
-        }
-        return string(bstr);
-    }
-    
     // Function to check if job exists and caller is involved
     function isCallerInvolvedInJob(string memory _jobId, address _caller) external view returns (bool) {
         require(address(jobContract) != address(0), "Job contract not set");
@@ -418,14 +340,13 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         return false;
     }
     
-    // Quote functions
+    // Quote function
     function quoteSingleChain(
-        string calldata _functionName,
+        string calldata /* _functionName */,
         bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(nativeChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
+        return bridge.quoteNativeChain(_payload, _options);
     }
     
     // View functions
@@ -433,9 +354,32 @@ function _handleFinalizeDispute(string memory disputeId, bool winningSide) inter
         return usdtToken.balanceOf(address(this));
     }
     
-    function getNativeChainEid() external view returns (uint32) {
-        return nativeChainEid;
+    // ==================== UTILITY FUNCTIONS ====================
+    
+    // Utility function to convert uint to string
+    function uint2str(uint256 _i) internal pure returns (string memory) {
+        if (_i == 0) {
+            return "0";
+        }
+        uint256 j = _i;
+        uint256 len;
+        while (j != 0) {
+            len++;
+            j /= 10;
+        }
+        bytes memory bstr = new bytes(len);
+        uint256 k = len;
+        while (_i != 0) {
+            k = k - 1;
+            uint8 temp = (48 + uint8(_i - _i / 10 * 10));
+            bytes1 b1 = bytes1(temp);
+            bstr[k] = b1;
+            _i /= 10;
+        }
+        return string(bstr);
     }
+    
+    // ==================== ADMIN WITHDRAWAL FUNCTIONS ====================
     
     // Owner function to withdraw collected fees
     function withdrawFees(uint256 _amount) external onlyOwner {
