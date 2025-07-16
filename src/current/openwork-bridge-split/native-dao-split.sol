@@ -91,32 +91,6 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
 
     // ==================== MESSAGE HANDLERS ====================
     
-    function handleUpdateStakeData(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive
-    ) external {
-        require(msg.sender == address(bridge), "Only bridge can call this function");
-        
-        stakes[staker] = Stake({
-            amount: amount,
-            unlockTime: unlockTime,
-            durationMinutes: durationMinutes,
-            isActive: isActive
-        });
-        
-        // Update staker tracking
-        if (isActive && !isStaker[staker]) {
-            allStakers.push(staker);
-            isStaker[staker] = true;
-        } else if (!isActive && isStaker[staker]) {
-            isStaker[staker] = false;
-        }
-        
-        emit StakeDataReceived(staker, amount, isActive);
-    }
     
     // ==================== CONTRACT SETUP FUNCTIONS ====================
     
@@ -219,15 +193,32 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
 
     // ==================== DIRECT STAKE DATA UPDATE (for local use) ====================
     
-    function updateStakeData(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive
-    ) external onlyOwner {
-        handleUpdateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
+function updateStakeData(
+    address staker,
+    uint256 amount,
+    uint256 unlockTime,
+    uint256 durationMinutes,
+    bool isActive
+) external {
+    require(msg.sender == address(bridge), "Only bridge can call this function");
+    
+    stakes[staker] = Stake({
+        amount: amount,
+        unlockTime: unlockTime,
+        durationMinutes: durationMinutes,
+        isActive: isActive
+    });
+    
+    // Update staker tracking
+    if (isActive && !isStaker[staker]) {
+        allStakers.push(staker);
+        isStaker[staker] = true;
+    } else if (!isActive && isStaker[staker]) {
+        isStaker[staker] = false;
     }
+    
+    emit StakeDataReceived(staker, amount, isActive);
+}
     
     // ==================== EARNER MANAGEMENT ====================
     
@@ -559,5 +550,5 @@ contract CrossChainNativeDAO is Governor, GovernorSettings, GovernorCountingSimp
     }
     
     // Allow contract to receive ETH for paying LayerZero fees
-    receive() external payable {}
+    receive() external payable override {}
 }

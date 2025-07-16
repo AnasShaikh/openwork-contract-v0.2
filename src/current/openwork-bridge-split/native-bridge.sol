@@ -8,7 +8,7 @@ import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/I
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 interface INativeDAO {
-    function handleUpdateStakeData(
+    function updateStakeData(
         address staker,
         uint256 amount,
         uint256 unlockTime,
@@ -99,11 +99,11 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         
         // ==================== NATIVE DAO MESSAGES ====================
         if (keccak256(bytes(functionName)) == keccak256(bytes("updateStakeData"))) {
-            require(nativeDaoContract != address(0), "Native DAO contract not set");
-            (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
-            INativeDAO(nativeDaoContract).handleUpdateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
+        require(nativeDaoContract != address(0), "Native DAO contract not set");
+        (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
+        INativeDAO(nativeDaoContract).updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
         }
-        
+
         // ==================== NATIVE ATHENA MESSAGES ====================
         else if (keccak256(bytes(functionName)) == keccak256(bytes("raiseDispute"))) {
             require(nativeAthenaContract != address(0), "Native Athena contract not set");
