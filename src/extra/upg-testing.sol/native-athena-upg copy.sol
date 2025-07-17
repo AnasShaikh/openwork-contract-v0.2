@@ -286,10 +286,10 @@ contract NativeAthena is
         emit AthenaClientChainEidUpdated(oldEid, _chainEid);
     }
     
-    // ==================== FIXED LOCAL INTERFACE FOR NATIVE DAO ====================
+    // ==================== LOCAL INTERFACE FOR NATIVE DAO ====================
     
     /**
-     * @notice Function for Native DAO to notify governance actions (called locally) - FIXED VERSION
+     * @notice Function for Native DAO to notify governance actions (called locally)
      * @param account Address of the user who performed governance action
      * @param actionType Type of governance action (propose, vote, etc.)
      * @param _rewardsOptions LayerZero options for sending to Rewards Contract
@@ -308,7 +308,7 @@ contract NativeAthena is
     }
     
     /**
-     * @notice Send governance notification to Rewards Contract via bridge (FIXED VERSION)
+     * @notice Send governance notification to Rewards Contract via bridge
      * @param account Address of the user
      * @param actionType Type of action
      * @param _rewardsOptions LayerZero options
@@ -322,11 +322,19 @@ contract NativeAthena is
         
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
         
-        // FIXED: Send directly using user-provided msg.value and options (just like LOWJC)
-        try bridge.sendToRewardsChain{value: msg.value}("notifyGovernanceAction", payload, _rewardsOptions) {
-            emit GovernanceActionForwardedToRewards(account, actionType, msg.value);
+        uint256 fee = 0;
+        try bridge.quoteRewardsChain(payload, _rewardsOptions) returns (uint256 quotedFee) {
+            fee = quotedFee;
         } catch {
-            // Silent fail
+            return;
+        }
+        
+        if (fee > 0 && msg.value >= fee) {
+            try bridge.sendToRewardsChain{value: fee}("notifyGovernanceAction", payload, _rewardsOptions) {
+                emit GovernanceActionForwardedToRewards(account, actionType, fee);
+            } catch {
+                // Silent fail
+            }
         }
     }
     
@@ -463,7 +471,7 @@ contract NativeAthena is
     // through the bridge from other chains (AthenaClient, LOWJC, etc.).
     // Local submissions would bypass the fee collection and cross-chain flow.
     
-    // ==================== FIXED VOTING FUNCTIONS ====================
+    // ==================== UPDATED VOTING FUNCTIONS ====================
     
     function vote(
         VotingType _votingType, 
@@ -484,6 +492,16 @@ contract NativeAthena is
         // Prepare payloads for both chains
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
         bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+        
+        // Get fee quote for both chains
+        (uint256 totalFeeCost, , ) = bridge.quoteTwoChains(
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        );
+        
+        require(msg.value >= totalFeeCost, "Insufficient fee provided");
         
         // Emit event if user is using earned tokens (no active stake above threshold)
         (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
@@ -533,7 +551,7 @@ contract NativeAthena is
             dispute.votesAgainst += voteWeight;
         }
         
-        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        // Send to both chains using the bridge's sendToTwoChains function
         try bridge.sendToTwoChains{value: msg.value}(
             "voteOnDispute",
             rewardsPayload,
@@ -573,7 +591,7 @@ contract NativeAthena is
             application.votesAgainst += voteWeight;
         }
         
-        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        // Send to both chains using the bridge's sendToTwoChains function
         try bridge.sendToTwoChains{value: msg.value}(
             "voteOnSkillVerification",
             rewardsPayload,
@@ -613,7 +631,7 @@ contract NativeAthena is
             athenaApp.votesAgainst += voteWeight;
         }
         
-        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        // Send to both chains using the bridge's sendToTwoChains function
         try bridge.sendToTwoChains{value: msg.value}(
             "voteOnAskAthena",
             rewardsPayload,
@@ -627,7 +645,7 @@ contract NativeAthena is
         }
     }
     
-    // FIXED: Function to finalize dispute - can be called by anyone
+    // Function to finalize dispute - can be called by anyone
     function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
         require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
         
@@ -641,7 +659,7 @@ contract NativeAthena is
         dispute.isFinalized = true;
         dispute.result = dispute.votesFor > dispute.votesAgainst;
         
-        // FIXED: Send message to AthenaClient with the winning side (direct call)
+        // Send message to AthenaClient with the winning side
         bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
         
         try bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions) {

@@ -131,10 +131,10 @@ contract CrossChainNativeDAO is
         emit BridgeUpdated(oldBridge, _bridge);
     }
     
-    // ==================== FIXED CROSS-CHAIN MESSAGING VIA BRIDGE ====================
+    // ==================== UPDATED CROSS-CHAIN MESSAGING VIA BRIDGE ====================
     
     /**
-     * @notice Send governance notification via Bridge (FIXED VERSION)
+     * @notice Send governance notification via Bridge
      * @param account Address of the user who performed governance action
      * @param actionType Type of governance action
      * @param _options LayerZero options for the message
@@ -152,11 +152,24 @@ contract CrossChainNativeDAO is
         // Prepare payload for rewards chain
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
         
-        // Send directly using user-provided msg.value and options (just like LOWJC)
-        try bridge.sendToRewardsChain{value: msg.value}("notifyGovernanceAction", payload, _options) {
-            emit GovernanceActionSentToBridge(account, actionType, msg.value);
+        // Get fee quote from Bridge
+        uint256 fee = 0;
+        try bridge.quoteRewardsChain(payload, _options) returns (uint256 quotedFee) {
+            fee = quotedFee;
         } catch {
-            emit CrossContractCallFailed(account, "Failed to send governance action to Bridge");
+            emit CrossContractCallFailed(account, "Failed to quote governance forwarding fee");
+            return;
+        }
+        
+        // Send via Bridge if fee is available
+        if (fee > 0 && address(this).balance >= fee) {
+            try bridge.sendToRewardsChain{value: fee}("notifyGovernanceAction", payload, _options) {
+                emit GovernanceActionSentToBridge(account, actionType, fee);
+            } catch {
+                emit CrossContractCallFailed(account, "Failed to send governance action to Bridge");
+            }
+        } else {
+            emit CrossContractCallFailed(account, "Insufficient balance for governance forwarding");
         }
     }
     
@@ -372,9 +385,9 @@ contract CrossChainNativeDAO is
         return super.hasVoted(proposalId, account);
     }
     
-    // ==================== FIXED VOTING FUNCTIONS ====================
+    // ==================== UPDATED VOTING FUNCTIONS ====================
     
-    // FIXED: New function with user-provided options for cross-chain governance notifications
+    // New function with user-provided options for cross-chain governance notifications
     function castVoteWithOptions(
         uint256 proposalId, 
         uint8 support, 
@@ -393,13 +406,13 @@ contract CrossChainNativeDAO is
             }
         }
         
-        // FIXED: Send governance notification via Bridge
+        // Send governance notification via Bridge
         _sendGovernanceNotificationViaBridge(msg.sender, "vote", _options);
         
         return _castVote(proposalId, msg.sender, support, reason, "");
     }
     
-    // Modified original _castVote to NOT make cross-chain calls (they're handled in castVoteWithOptions)
+    // Modified original _castVote to use default behavior when called from Governor
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason, bytes memory params)
         internal override returns (uint256) {
         
@@ -418,7 +431,7 @@ contract CrossChainNativeDAO is
         return super._castVote(proposalId, account, support, reason, params);
     }
     
-    // FIXED: New function with user-provided options for cross-chain governance notifications
+    // New function with user-provided options for cross-chain governance notifications
     function proposeWithOptions(
         address[] memory targets, 
         uint256[] memory values, 
@@ -439,7 +452,7 @@ contract CrossChainNativeDAO is
             }
         }
         
-        // FIXED: Send governance notification via Bridge
+        // Send governance notification via Bridge
         _sendGovernanceNotificationViaBridge(msg.sender, "propose", _options);
         
         uint256 proposalId = super.propose(targets, values, calldatas, description);
@@ -447,7 +460,7 @@ contract CrossChainNativeDAO is
         return proposalId;
     }
     
-    // Modified original propose to NOT make cross-chain calls (they're handled in proposeWithOptions)
+    // Modified original propose to use default behavior
     function propose(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description)
         public override returns (uint256) {
         
@@ -521,7 +534,7 @@ contract CrossChainNativeDAO is
         return proposalIds.length;
     }
     
-    // ==================== QUOTE FUNCTIONS ====================
+    // ==================== UPDATED QUOTE FUNCTIONS ====================
     
     function quoteGovernanceNotification(
         address account,
