@@ -232,42 +232,41 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, _dstEid, _payload);
     }
     
+    // NEW: Send to two chains simultaneously
     function sendToTwoChains(
         string memory _functionName,
-        uint32 _dstEid1,
-        uint32 _dstEid2,
-        bytes memory _payload1,
-        bytes memory _payload2,
-        bytes calldata _options1,
-        bytes calldata _options2
+        bytes memory _rewardsPayload,
+        bytes memory _athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
     ) external payable onlyAuthorized {
         // Calculate total fees upfront
-        MessagingFee memory fee1 = _quote(_dstEid1, _payload1, _options1, false);
-        MessagingFee memory fee2 = _quote(_dstEid2, _payload2, _options2, false);
+        MessagingFee memory fee1 = _quote(rewardsChainEid, _rewardsPayload, _rewardsOptions, false);
+        MessagingFee memory fee2 = _quote(athenaClientChainEid, _athenaClientPayload, _athenaClientOptions, false);
         uint256 totalFee = fee1.nativeFee + fee2.nativeFee;
         
         require(msg.value >= totalFee, "Insufficient fee provided");
         
-        // Send to first chain
+        // Send to rewards chain
         _lzSend(
-            _dstEid1,
-            _payload1,
-            _options1,
+            rewardsChainEid,
+            _rewardsPayload,
+            _rewardsOptions,
             fee1,
             payable(msg.sender)
         );
         
-        // Send to second chain
+        // Send to athena client chain
         _lzSend(
-            _dstEid2,
-            _payload2,
-            _options2,
+            athenaClientChainEid,
+            _athenaClientPayload,
+            _athenaClientOptions,
             fee2,
             payable(msg.sender)
         );
         
-        emit CrossChainMessageSent(_functionName, _dstEid1, _payload1);
-        emit CrossChainMessageSent(_functionName, _dstEid2, _payload2);
+        emit CrossChainMessageSent(_functionName, rewardsChainEid, _rewardsPayload);
+        emit CrossChainMessageSent(_functionName, athenaClientChainEid, _athenaClientPayload);
     }
     
     function sendToThreeChains(
@@ -335,20 +334,19 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
     
+    // NEW: Quote for two chains
     function quoteTwoChains(
-        uint32 _dstEid1,
-        uint32 _dstEid2,
-        bytes calldata _payload1,
-        bytes calldata _payload2,
-        bytes calldata _options1,
-        bytes calldata _options2
-    ) external view returns (uint256 totalFee, uint256 fee1, uint256 fee2) {
-        MessagingFee memory msgFee1 = _quote(_dstEid1, _payload1, _options1, false);
-        MessagingFee memory msgFee2 = _quote(_dstEid2, _payload2, _options2, false);
+        bytes calldata _rewardsPayload,
+        bytes calldata _athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 athenaClientFee) {
+        MessagingFee memory msgFee1 = _quote(rewardsChainEid, _rewardsPayload, _rewardsOptions, false);
+        MessagingFee memory msgFee2 = _quote(athenaClientChainEid, _athenaClientPayload, _athenaClientOptions, false);
         
-        fee1 = msgFee1.nativeFee;
-        fee2 = msgFee2.nativeFee;
-        totalFee = fee1 + fee2;
+        rewardsFee = msgFee1.nativeFee;
+        athenaClientFee = msgFee2.nativeFee;
+        totalFee = rewardsFee + athenaClientFee;
     }
     
     function quoteThreeChains(

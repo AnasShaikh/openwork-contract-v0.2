@@ -15,6 +15,7 @@ interface INativeOpenWorkJobContract {
     function getUserRewardInfo(address user) external view returns (uint256 cumulativeEarnings, uint256 totalTokens);
 }
 
+// UPDATED INTERFACE for the bridge to support new functionality
 interface INativeChainBridge {
     function sendToRewardsChain(
         string memory _functionName,
@@ -130,7 +131,7 @@ contract CrossChainNativeDAO is
         emit BridgeUpdated(oldBridge, _bridge);
     }
     
-    // ==================== CROSS-CHAIN MESSAGING VIA BRIDGE ====================
+    // ==================== UPDATED CROSS-CHAIN MESSAGING VIA BRIDGE ====================
     
     /**
      * @notice Send governance notification via Bridge
@@ -148,8 +149,10 @@ contract CrossChainNativeDAO is
             return;
         }
         
-        // Get fee quote from Bridge
+        // Prepare payload for rewards chain
         bytes memory payload = abi.encode("notifyGovernanceAction", account);
+        
+        // Get fee quote from Bridge
         uint256 fee = 0;
         try bridge.quoteRewardsChain(payload, _options) returns (uint256 quotedFee) {
             fee = quotedFee;
@@ -382,7 +385,7 @@ contract CrossChainNativeDAO is
         return super.hasVoted(proposalId, account);
     }
     
-    // ==================== MODIFIED VOTING FUNCTIONS ====================
+    // ==================== UPDATED VOTING FUNCTIONS ====================
     
     // New function with user-provided options for cross-chain governance notifications
     function castVoteWithOptions(
@@ -531,7 +534,7 @@ contract CrossChainNativeDAO is
         return proposalIds.length;
     }
     
-    // ==================== QUOTE FUNCTIONS ====================
+    // ==================== UPDATED QUOTE FUNCTIONS ====================
     
     function quoteGovernanceNotification(
         address account,
@@ -574,5 +577,5 @@ contract CrossChainNativeDAO is
     }
     
     // Allow contract to receive ETH for paying LayerZero fees
-receive() external payable override {}
+    receive() external payable override {}
 }

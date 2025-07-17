@@ -29,6 +29,7 @@ interface INativeOpenWorkJobContract {
     function jobExists(string memory _jobId) external view returns (bool);
 }
 
+// UPDATED INTERFACE for the bridge to support new two-chain functionality
 interface INativeChainBridge {
     function sendToRewardsChain(
         string memory _functionName,
@@ -42,6 +43,14 @@ interface INativeChainBridge {
         bytes calldata _options
     ) external payable;
     
+    function sendToTwoChains(
+        string memory _functionName,
+        bytes memory _rewardsPayload,
+        bytes memory _athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external payable;
+    
     function quoteRewardsChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -51,6 +60,13 @@ interface INativeChainBridge {
         bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee);
+    
+    function quoteTwoChains(
+        bytes calldata _rewardsPayload,
+        bytes calldata _athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 athenaClientFee);
 }
 
 contract NativeAthena is 
@@ -473,31 +489,19 @@ contract NativeAthena is
         uint256 voteWeight = getUserVotingPower(msg.sender);
         require(voteWeight > 0, "No voting power");
         
-        // Calculate fees for cross-chain calls upfront
+        // Prepare payloads for both chains
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        uint256 rewardsFeeCost = 0;
-        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
-            rewardsFeeCost = fee;
-        } catch {}
+        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
         
-        // All voting types now send to Athena Client for fee distribution
-        bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        uint256 athenaClientFeeCost = 0;
-        try bridge.quoteAthenaClientChain(athenaPayload, _athenaClientOptions) returns (uint256 fee) {
-            athenaClientFeeCost = fee;
-        } catch {}
+        // Get fee quote for both chains
+        (uint256 totalFeeCost, , ) = bridge.quoteTwoChains(
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        );
         
-        uint256 totalFeeCost = rewardsFeeCost + athenaClientFeeCost;
         require(msg.value >= totalFeeCost, "Insufficient fee provided");
-        
-        // Send to rewards contract first (governance notification)
-        if (rewardsFeeCost > 0) {
-            try bridge.sendToRewardsChain{value: rewardsFeeCost}("notifyGovernanceAction", rewardsPayload, _rewardsOptions) {
-                // Success
-            } catch {
-                // Silent fail
-            }
-        }
         
         // Emit event if user is using earned tokens (no active stake above threshold)
         (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
@@ -512,17 +516,26 @@ contract NativeAthena is
             }
         }
         
-        // Route to appropriate voting function with separate fees
+        // Route to appropriate voting function
         if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
+            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
         } else if (_votingType == VotingType.SkillVerification) {
-            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
+            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
         } else if (_votingType == VotingType.AskAthena) {
-            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, _athenaClientOptions, athenaClientFeeCost);
+            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
         }
     }
     
-    function _voteOnDispute(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
+    function _voteOnDispute(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
         require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
         require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
         
@@ -538,19 +551,30 @@ contract NativeAthena is
             dispute.votesAgainst += voteWeight;
         }
         
-        // Notify AthenaClient about the vote for fee distribution using pre-calculated fee
-        if (nativeFee > 0) {
-            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-            
-            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // Send to both chains using the bridge's sendToTwoChains function
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnDispute",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
         }
     }
     
-    function _voteOnSkillVerification(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
+    function _voteOnSkillVerification(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
         uint256 applicationId = stringToUint(_disputeId);
         require(applicationId < applicationCounter, "Application does not exist");
         require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
@@ -567,19 +591,30 @@ contract NativeAthena is
             application.votesAgainst += voteWeight;
         }
         
-        // Notify AthenaClient about the vote for fee distribution
-        if (nativeFee > 0) {
-            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-            
-            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // Send to both chains using the bridge's sendToTwoChains function
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnSkillVerification",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
         }
     }
     
-    function _voteOnAskAthena(string memory _disputeId, bool _voteFor, address _claimAddress, uint256 voteWeight, bytes calldata _options, uint256 nativeFee) internal {
+    function _voteOnAskAthena(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
         uint256 athenaId = stringToUint(_disputeId);
         require(athenaId < askAthenaCounter, "AskAthena application does not exist");
         require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
@@ -596,15 +631,17 @@ contract NativeAthena is
             athenaApp.votesAgainst += voteWeight;
         }
         
-        // Notify AthenaClient about the vote for fee distribution
-        if (nativeFee > 0) {
-            bytes memory payload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-            
-            try bridge.sendToAthenaClientChain{value: nativeFee}("recordVote", payload, _options) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // Send to both chains using the bridge's sendToTwoChains function
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnAskAthena",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
         }
     }
     
@@ -622,7 +659,7 @@ contract NativeAthena is
         dispute.isFinalized = true;
         dispute.result = dispute.votesFor > dispute.votesAgainst;
         
-        // Send simplified cross-chain message to AthenaClient with only the winning side
+        // Send message to AthenaClient with the winning side
         bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
         
         try bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions) {
@@ -657,21 +694,12 @@ contract NativeAthena is
         // Calculate vote weight for the caller
         uint256 voteWeight = getUserVotingPower(msg.sender);
         
-        // Calculate rewards fee
+        // Prepare payloads
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        rewardsFee = 0;
-        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
-            rewardsFee = fee;
-        } catch {}
-        
-        // Calculate athena client fee for all voting types
-        athenaClientFee = 0;
         bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        try bridge.quoteAthenaClientChain(athenaPayload, _athenaClientOptions) returns (uint256 fee) {
-            athenaClientFee = fee;
-        } catch {}
         
-        totalFee = rewardsFee + athenaClientFee;
+        // Get quote from bridge
+        return bridge.quoteTwoChains(rewardsPayload, athenaPayload, _rewardsOptions, _athenaClientOptions);
     }
     
     function quoteNativeDAOGovernanceForwarding(
