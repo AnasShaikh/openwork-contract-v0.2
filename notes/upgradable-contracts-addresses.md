@@ -1,4 +1,4 @@
-Optimism Sepolia Deployed Contracts
+Optimism Sepolia Deployed Contracts - Native Chain
 Implementation Contracts:
 
 NOWJC Implementation: 0xdf0f2473697B45228C4B494B1dF7a91Ae0D391ff
@@ -15,9 +15,11 @@ NOWJC Proxy: 0xB415E2a2945b8768b313Ec3748F006a26EA4CfC7
 Native DAO Proxy: 0xbE72C0c8c391D5d4f7b22b24DBE57B881642047f
 NativeAthena: 0xc608947b04f19Ae0005C7A3dEC4bfE193b2876E7
 
-Arbitrum Deployments
+Arbitrum Deployments - Local Chain
 
 Bridge: 0xBA9B62561E16EC69F4F2cE3795e69f382816e3Cb
+
+USDT (self owned) -  0x403a1eea6FF82152F88Da33a51c439f7e2C85665
 
 Implementations:
 AthenaClient : 0x66966DE0dBd954e6921Baa9443f1eFf29dA2fD86
@@ -28,7 +30,7 @@ AthenaClient: 0x866A9ddE3C07feb00F0a47D7dB6d3Bc47Cb6Ded4
 LOWJC(Local Openwork Job Contract): 0xB922d86beAC297819ee76eb575c3ad5972B0Ec04
 
 
-Ethereum Sepolia Deployments
+Ethereum Sepolia Deployments - Main Chain
 
 Token: 0x3428f7D19C0558f8bf54D1A0E726D5A3e86BcDB1
 
