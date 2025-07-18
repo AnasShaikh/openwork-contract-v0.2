@@ -480,249 +480,183 @@ contract NativeAthena is
     
     // ==================== FIXED VOTING FUNCTIONS ====================
     
-function vote(
-    VotingType _votingType, 
-    string memory _disputeId, 
-    bool _voteFor, 
-    address _claimAddress, 
-    bytes calldata _rewardsOptions,
-    bytes calldata _athenaClientOptions
-) external payable {
-    // Check if user can vote (has sufficient stake OR earned tokens)
-    require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
-    require(_claimAddress != address(0), "Claim address cannot be zero");
-    
-    // Calculate total vote weight (stake weight + earned tokens)
-    uint256 voteWeight = getUserVotingPower(msg.sender);
-    require(voteWeight > 0, "No voting power");
-    
-    // Emit event if user is using earned tokens (no active stake above threshold)
-    (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
-    if (!isActive || stakeAmount < minStakeRequired) {
-        if (address(nowjContract) != address(0)) {
-            uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
-            if (earnedTokens >= minStakeRequired) {
-                string memory votingTypeStrShort = _votingType == VotingType.Dispute ? "dispute" : 
-                                                  _votingType == VotingType.SkillVerification ? "skill_verification" : "ask_athena";
-                emit EarnedTokensUsedForVoting(msg.sender, earnedTokens, votingTypeStrShort);
-            }
-        }
-    }
-    
-    // Route to appropriate voting function
-    if (_votingType == VotingType.Dispute) {
-        _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
-    } else if (_votingType == VotingType.SkillVerification) {
-        _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
-    } else if (_votingType == VotingType.AskAthena) {
-        _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
-    }
-}
-
-function _voteOnDispute(
-    string memory _disputeId, 
-    bool _voteFor, 
-    address _claimAddress, 
-    uint256 voteWeight,
-    bytes calldata _rewardsOptions,
-    bytes calldata _athenaClientOptions
-) internal {
-    require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
-    require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
-    
-    Dispute storage dispute = disputes[_disputeId];
-    require(dispute.isVotingActive, "Voting is not active for this dispute");
-    require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-    
-    hasVotedOnDispute[_disputeId][msg.sender] = true;
-    
-    if (_voteFor) {
-        dispute.votesFor += voteWeight;
-    } else {
-        dispute.votesAgainst += voteWeight;
-    }
-    
-    // FIXED: Use separate calls to ensure cross-chain messaging works 100%
-    if (address(bridge) != address(0)) {
-        // Calculate fees for both chains
+    function vote(
+        VotingType _votingType, 
+        string memory _disputeId, 
+        bool _voteFor, 
+        address _claimAddress, 
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) external payable {
+        // Check if user can vote (has sufficient stake OR earned tokens)
+        require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
+        require(_claimAddress != address(0), "Claim address cannot be zero");
+        
+        // Calculate total vote weight (stake weight + earned tokens)
+        uint256 voteWeight = getUserVotingPower(msg.sender);
+        require(voteWeight > 0, "No voting power");
+        
+        // Prepare payloads for both chains
         bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
         bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
         
-        uint256 rewardsFee = 0;
-        uint256 athenaClientFee = 0;
-        
-        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
-            rewardsFee = fee;
-        } catch {}
-        
-        try bridge.quoteAthenaClientChain(athenaClientPayload, _athenaClientOptions) returns (uint256 fee) {
-            athenaClientFee = fee;
-        } catch {}
-        
-        require(msg.value >= rewardsFee + athenaClientFee, "Insufficient fee provided");
-        
-        // Send to rewards chain first
-        if (rewardsFee > 0) {
-            try bridge.sendToRewardsChain{value: rewardsFee}("notifyGovernanceAction", rewardsPayload, _rewardsOptions) {
-                // Success
-            } catch {
-                // Silent fail but continue
+        // Emit event if user is using earned tokens (no active stake above threshold)
+        (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
+        if (!isActive || stakeAmount < minStakeRequired) {
+            if (address(nowjContract) != address(0)) {
+                uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
+                if (earnedTokens >= minStakeRequired) {
+                    string memory votingTypeStrShort = _votingType == VotingType.Dispute ? "dispute" : 
+                                                      _votingType == VotingType.SkillVerification ? "skill_verification" : "ask_athena";
+                    emit EarnedTokensUsedForVoting(msg.sender, earnedTokens, votingTypeStrShort);
+                }
             }
         }
         
-        // Send to athena client chain
-        if (athenaClientFee > 0) {
-            try bridge.sendToAthenaClientChain{value: athenaClientFee}("recordVote", athenaClientPayload, _athenaClientOptions) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // Route to appropriate voting function
+        if (_votingType == VotingType.Dispute) {
+            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
+        } else if (_votingType == VotingType.SkillVerification) {
+            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
+        } else if (_votingType == VotingType.AskAthena) {
+            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, rewardsPayload, athenaClientPayload, _rewardsOptions, _athenaClientOptions);
         }
     }
-}
-
-function _voteOnSkillVerification(
-    string memory _disputeId, 
-    bool _voteFor, 
-    address _claimAddress, 
-    uint256 voteWeight,
-    bytes calldata _rewardsOptions,
-    bytes calldata _athenaClientOptions
-) internal {
-    uint256 applicationId = stringToUint(_disputeId);
-    require(applicationId < applicationCounter, "Application does not exist");
-    require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
     
-    SkillVerificationApplication storage application = skillApplications[applicationId];
-    require(application.isVotingActive, "Voting is not active for this application");
-    require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-    
-    hasVotedOnSkillApplication[applicationId][msg.sender] = true;
-    
-    if (_voteFor) {
-        application.votesFor += voteWeight;
-    } else {
-        application.votesAgainst += voteWeight;
-    }
-    
-    // FIXED: Use separate calls to ensure cross-chain messaging works 100%
-    if (address(bridge) != address(0)) {
-        // Calculate fees for both chains
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+    function _voteOnDispute(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
+        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+        require(!hasVotedOnDispute[_disputeId][msg.sender], "Already voted on this dispute");
         
-        uint256 rewardsFee = 0;
-        uint256 athenaClientFee = 0;
+        Dispute storage dispute = disputes[_disputeId];
+        require(dispute.isVotingActive, "Voting is not active for this dispute");
+        require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
         
-        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
-            rewardsFee = fee;
-        } catch {}
+        hasVotedOnDispute[_disputeId][msg.sender] = true;
         
-        try bridge.quoteAthenaClientChain(athenaClientPayload, _athenaClientOptions) returns (uint256 fee) {
-            athenaClientFee = fee;
-        } catch {}
-        
-        require(msg.value >= rewardsFee + athenaClientFee, "Insufficient fee provided");
-        
-        // Send to rewards chain first
-        if (rewardsFee > 0) {
-            try bridge.sendToRewardsChain{value: rewardsFee}("notifyGovernanceAction", rewardsPayload, _rewardsOptions) {
-                // Success
-            } catch {
-                // Silent fail but continue
-            }
+        if (_voteFor) {
+            dispute.votesFor += voteWeight;
+        } else {
+            dispute.votesAgainst += voteWeight;
         }
         
-        // Send to athena client chain
-        if (athenaClientFee > 0) {
-            try bridge.sendToAthenaClientChain{value: athenaClientFee}("recordVote", athenaClientPayload, _athenaClientOptions) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnDispute",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
         }
     }
-}
-
-function _voteOnAskAthena(
-    string memory _disputeId, 
-    bool _voteFor, 
-    address _claimAddress, 
-    uint256 voteWeight,
-    bytes calldata _rewardsOptions,
-    bytes calldata _athenaClientOptions
-) internal {
-    uint256 athenaId = stringToUint(_disputeId);
-    require(athenaId < askAthenaCounter, "AskAthena application does not exist");
-    require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
     
-    AskAthenaApplication storage athenaApp = askAthenaApplications[athenaId];
-    require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
-    require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-    
-    hasVotedOnAskAthena[athenaId][msg.sender] = true;
-    
-    if (_voteFor) {
-        athenaApp.votesFor += voteWeight;
-    } else {
-        athenaApp.votesAgainst += voteWeight;
-    }
-    
-    // FIXED: Use separate calls to ensure cross-chain messaging works 100%
-    if (address(bridge) != address(0)) {
-        // Calculate fees for both chains
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
+    function _voteOnSkillVerification(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
+        uint256 applicationId = stringToUint(_disputeId);
+        require(applicationId < applicationCounter, "Application does not exist");
+        require(!hasVotedOnSkillApplication[applicationId][msg.sender], "Already voted on this application");
         
-        uint256 rewardsFee = 0;
-        uint256 athenaClientFee = 0;
+        SkillVerificationApplication storage application = skillApplications[applicationId];
+        require(application.isVotingActive, "Voting is not active for this application");
+        require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
         
-        try bridge.quoteRewardsChain(rewardsPayload, _rewardsOptions) returns (uint256 fee) {
-            rewardsFee = fee;
-        } catch {}
+        hasVotedOnSkillApplication[applicationId][msg.sender] = true;
         
-        try bridge.quoteAthenaClientChain(athenaClientPayload, _athenaClientOptions) returns (uint256 fee) {
-            athenaClientFee = fee;
-        } catch {}
-        
-        require(msg.value >= rewardsFee + athenaClientFee, "Insufficient fee provided");
-        
-        // Send to rewards chain first
-        if (rewardsFee > 0) {
-            try bridge.sendToRewardsChain{value: rewardsFee}("notifyGovernanceAction", rewardsPayload, _rewardsOptions) {
-                // Success
-            } catch {
-                // Silent fail but continue
-            }
+        if (_voteFor) {
+            application.votesFor += voteWeight;
+        } else {
+            application.votesAgainst += voteWeight;
         }
         
-        // Send to athena client chain
-        if (athenaClientFee > 0) {
-            try bridge.sendToAthenaClientChain{value: athenaClientFee}("recordVote", athenaClientPayload, _athenaClientOptions) {
-                // Success
-            } catch {
-                // Silent fail
-            }
+        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnSkillVerification",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
         }
     }
-}
-
     
- function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
-    require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+    function _voteOnAskAthena(
+        string memory _disputeId, 
+        bool _voteFor, 
+        address /* _claimAddress */, 
+        uint256 voteWeight,
+        bytes memory rewardsPayload,
+        bytes memory athenaClientPayload,
+        bytes calldata _rewardsOptions,
+        bytes calldata _athenaClientOptions
+    ) internal {
+        uint256 athenaId = stringToUint(_disputeId);
+        require(athenaId < askAthenaCounter, "AskAthena application does not exist");
+        require(!hasVotedOnAskAthena[athenaId][msg.sender], "Already voted on this AskAthena application");
+        
+        AskAthenaApplication storage athenaApp = askAthenaApplications[athenaId];
+        require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
+        require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+        
+        hasVotedOnAskAthena[athenaId][msg.sender] = true;
+        
+        if (_voteFor) {
+            athenaApp.votesFor += voteWeight;
+        } else {
+            athenaApp.votesAgainst += voteWeight;
+        }
+        
+        // FIXED: Send to both chains using the bridge's sendToTwoChains function (direct call)
+        try bridge.sendToTwoChains{value: msg.value}(
+            "voteOnAskAthena",
+            rewardsPayload,
+            athenaClientPayload,
+            _rewardsOptions,
+            _athenaClientOptions
+        ) {
+            // Success
+        } catch {
+            // Silent fail
+        }
+    }
     
-    Dispute storage dispute = disputes[_disputeId];
-    require(dispute.isVotingActive, "Voting is not active for this dispute");
-    require(!dispute.isFinalized, "Dispute already finalized");
-    require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
-    
-    // Finalize the dispute
-    dispute.isVotingActive = false;
-    dispute.isFinalized = true;
-    dispute.result = dispute.votesFor > dispute.votesAgainst;
-    
-    // FIXED: Send message to AthenaClient using separate call
-    if (address(bridge) != address(0)) {
+    // FIXED: Function to finalize dispute - can be called by anyone
+    function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
+        require(disputes[_disputeId].timeStamp > 0, "Dispute does not exist");
+        
+        Dispute storage dispute = disputes[_disputeId];
+        require(dispute.isVotingActive, "Voting is not active for this dispute");
+        require(!dispute.isFinalized, "Dispute already finalized");
+        require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
+        
+        // Finalize the dispute
+        dispute.isVotingActive = false;
+        dispute.isFinalized = true;
+        dispute.result = dispute.votesFor > dispute.votesAgainst;
+        
+        // FIXED: Send message to AthenaClient with the winning side (direct call)
         bytes memory payload = abi.encode("finalizeDispute", _disputeId, dispute.result);
         
         try bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions) {
@@ -730,10 +664,10 @@ function _voteOnAskAthena(
         } catch {
             // Silent fail
         }
+        
+        emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
     }
     
-    emit DisputeFinalized(_disputeId, dispute.result, dispute.votesFor, dispute.votesAgainst);
-}
     // ==================== QUOTE FUNCTIONS ====================
     
     function quoteGovernanceNotification(
