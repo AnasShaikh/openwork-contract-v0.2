@@ -72,44 +72,51 @@ contract LayerZeroBridge is OAppSender, OAppReceiver {
     
     // ==================== LAYERZERO MESSAGE HANDLING ====================
     
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32, // _guid (not used)
-        bytes calldata _message,
-        address, // _executor (not used)
-        bytes calldata // _extraData (not used)
-    ) internal override {
-        (string memory functionName) = abi.decode(_message, (string));
-        
-        // ==================== UPGRADE HANDLING ====================
-        if (keccak256(bytes(functionName)) == keccak256(bytes("upgradeContract"))) {
-            require(_origin.srcEid == mainChainEid, "Upgrade commands only from main chain");
-            (, address targetProxy, address newImplementation) = abi.decode(_message, (string, address, address));
-            
-            // Execute upgrade directly with validation
-            require(targetProxy != address(0), "Invalid target proxy address");
-            require(newImplementation != address(0), "Invalid implementation address");
-            
-            // Execute the upgrade
-            IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
-            
-            emit UpgradeExecuted(targetProxy, newImplementation, _origin.srcEid);
-        }
-        
-        // ==================== ATHENA CLIENT MESSAGES ====================
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("finalizeDispute"))) {
-            require(athenaClientContract != address(0), "AthenaClient contract not set");
-            (, string memory disputeId, bool winningSide) = abi.decode(_message, (string, string, bool));
-            IAthenaClient(athenaClientContract).handleFinalizeDispute(disputeId, winningSide);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("recordVote"))) {
-            require(athenaClientContract != address(0), "AthenaClient contract not set");
-            (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) = abi.decode(_message, (string, string, address, address, uint256, bool));
-            IAthenaClient(athenaClientContract).handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
-        }
-        // Note: LOWJC contract doesn't receive messages, only sends them
-        
-        emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+function _lzReceive(
+    Origin calldata _origin,
+    bytes32,            // _guid (not used)
+    bytes calldata _message,
+    address,            // _executor (not used)
+    bytes calldata      // _extraData (not used)
+) internal override {
+    // --- 1) pull out the function name ---
+    (string memory functionName) = abi.decode(_message, (string));
+
+    // --- 2) UPGRADE HANDLING ---
+    if (keccak256(bytes(functionName)) == keccak256("upgradeFromDAO")) {
+        require(_origin.srcEid == mainChainEid, "Upgrade commands only from main chain");
+        // now decode the full payload
+        (, address targetProxy, address newImplementation) =
+            abi.decode(_message, (string, address, address));
+        require(targetProxy != address(0), "Invalid target proxy address");
+        require(newImplementation != address(0), "Invalid implementation address");
+        IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
+        emit UpgradeExecuted(targetProxy, newImplementation, _origin.srcEid);
     }
+
+    // --- 3) ATHENA CLIENT MESSAGES ---
+    else if (keccak256(bytes(functionName)) == keccak256("finalizeDispute")) {
+        require(athenaClientContract != address(0), "AthenaClient contract not set");
+        (, string memory disputeId, bool winningSide) =
+            abi.decode(_message, (string, string, bool));
+        IAthenaClient(athenaClientContract).handleFinalizeDispute(disputeId, winningSide);
+    }
+    else if (keccak256(bytes(functionName)) == keccak256("recordVote")) {
+        require(athenaClientContract != address(0), "AthenaClient contract not set");
+        (, string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) =
+            abi.decode(_message, (string, string, address, address, uint256, bool));
+        IAthenaClient(athenaClientContract).handleRecordVote(disputeId, voter, claimAddress, votingPower, voteFor);
+    }
+
+    // --- 4) unknown function → revert ---
+    else {
+        revert("Unknown function call");
+    }
+
+    // --- 5) emit a catch‐all event ---
+    emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
+}
+
     
     // ==================== BRIDGE FUNCTIONS ====================
     

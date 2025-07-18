@@ -581,18 +581,24 @@ contract MainDAO is
         payable(owner()).transfer(balance);
     }
 
- function upgradeContract(
-    uint32 targetChainId, 
-    address targetProxy, 
+function upgradeContract(
+    uint32 targetChainId,
+    address targetProxy,
     address newImplementation,
     bytes calldata _options
 ) external payable onlyOwner {
     if (targetChainId == chainId) {
         IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
     } else {
-        bridge.sendUpgradeCommand{value: msg.value}(targetChainId, targetProxy, newImplementation, _options);
+        bridge.sendUpgradeCommand{value: msg.value}(
+            targetChainId,
+            targetProxy,
+            newImplementation,
+            _options
+        );
     }
 }
+
     
     function emergencyWithdrawTokens(uint256 amount) external onlyOwner {
         require(openworkToken.transfer(owner(), amount), "Token transfer failed");

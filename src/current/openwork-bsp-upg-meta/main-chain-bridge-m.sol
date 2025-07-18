@@ -82,27 +82,26 @@ contract ThirdChainBridge is OAppSender, OAppReceiver {
     // ==================== UPGRADE FUNCTIONALITY ====================
     
 function sendUpgradeCommand(
-    uint32 targetChainId,
-    address targetProxy, 
+    uint32 _dstChainId,
+    address targetProxy,
     address newImplementation,
     bytes calldata _options
 ) external payable onlyMainDAO {
-    require(targetProxy != address(0), "Invalid target proxy address");
-    require(newImplementation != address(0), "Invalid implementation address");
-    
-    bytes memory payload = abi.encode("upgradeContract", targetProxy, newImplementation);
-    
+    // encode the call for the receiving side
+    bytes memory payload = abi.encode("upgradeFromDAO", targetProxy, newImplementation);
+
+    // note: include the refund address as the 5th arg
     _lzSend(
-        targetChainId,
-        payload,
-        _options,
-        MessagingFee(msg.value, 0),
-        payable(msg.sender)
+        uint16(_dstChainId),        // destination chain ID
+        payload,                    // payload
+        _options,                   // adapterParams/options
+        MessagingFee(msg.value, 0), // fee struct (amount, unused)
+        payable(msg.sender)         // refund excess gas/eth back to caller
     );
-    
-    emit UpgradeCommandSent(targetChainId, targetProxy, newImplementation);
-    emit CrossChainMessageSent("upgradeContract", targetChainId, payload);
+
+    emit UpgradeCommandSent(_dstChainId, targetProxy, newImplementation);
 }
+
     
     function quoteUpgradeCommand(
         uint32 targetChainId,
