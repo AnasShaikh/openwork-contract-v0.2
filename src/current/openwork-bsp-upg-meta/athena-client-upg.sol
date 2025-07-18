@@ -413,6 +413,8 @@ contract AthenaClientContract is
         require(balance > 0, "No balance to withdraw");
         payable(owner()).transfer(balance);
     }
+
+    
     
     function emergencyWithdrawUSDT() external onlyOwner {
         uint256 balance = usdtToken.balanceOf(address(this));
