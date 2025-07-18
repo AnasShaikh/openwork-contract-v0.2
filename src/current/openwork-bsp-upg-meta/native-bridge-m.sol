@@ -123,19 +123,16 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         (string memory functionName) = abi.decode(_message, (string));
         
         // ==================== UPGRADE HANDLING ====================
-    if (keccak256(bytes(functionName)) == keccak256(bytes("upgradeContract"))) {
+  if (keccak256(bytes(functionName)) == keccak256("upgradeFromDAO")) {
     require(_origin.srcEid == mainChainEid, "Upgrade commands only from main chain");
-    (, address targetProxy, address newImplementation) = abi.decode(_message, (string, address, address));
-    
-    // Execute upgrade directly without the modifier check
+    (, address targetProxy, address newImplementation) = 
+        abi.decode(_message, (string, address, address));
     require(targetProxy != address(0), "Invalid target proxy address");
     require(newImplementation != address(0), "Invalid implementation address");
-    
-    // Execute the upgrade
     IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
-    
     emit UpgradeExecuted(targetProxy, newImplementation, _origin.srcEid);
 }
+
         
         // ==================== NATIVE DAO MESSAGES ====================
         else if (keccak256(bytes(functionName)) == keccak256(bytes("updateStakeData"))) {
@@ -233,7 +230,7 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
             _payload,
             _options,
             MessagingFee(msg.value, 0),
-            payable(msg.sender)
+             payable(msg.sender)
         );
         
         emit CrossChainMessageSent(_functionName, athenaClientChainEid, _payload);

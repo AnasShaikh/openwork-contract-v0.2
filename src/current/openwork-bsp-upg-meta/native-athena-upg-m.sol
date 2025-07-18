@@ -192,8 +192,14 @@ contract NativeAthena is
         minStakeRequired = 100;
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
 
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}
     // ==================== MESSAGE HANDLERS ====================
     
     function handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) external {

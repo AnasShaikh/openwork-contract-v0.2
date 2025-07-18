@@ -112,8 +112,14 @@ contract CrossChainNativeDAO is
         votingRewardThreshold = 100 * 10**18;
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
 
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}
     // ==================== MESSAGE HANDLERS ====================
 
     

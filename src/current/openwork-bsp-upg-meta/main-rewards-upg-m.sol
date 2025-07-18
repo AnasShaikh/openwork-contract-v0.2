@@ -122,8 +122,14 @@ contract CrossChainRewardsContract is
         _initializeAuthorizedChains();
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
 
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}
     // ==================== MESSAGE HANDLERS ====================
     
     function handleCreateProfile(address user, address referrer, uint32 sourceChain) external {

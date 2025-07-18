@@ -151,8 +151,14 @@ contract CrossChainLocalOpenWorkJobContract is
         bridge = ILayerZeroBridge(_bridge);
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-    
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
+
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}    
     // ==================== ADMIN FUNCTIONS ====================
     
     function setBridge(address _bridge) external onlyOwner {
@@ -658,4 +664,5 @@ contract CrossChainLocalOpenWorkJobContract is
         require(balance > 0, "No USDT balance to withdraw");
         usdtToken.safeTransfer(owner(), balance);
     }
+
 }
