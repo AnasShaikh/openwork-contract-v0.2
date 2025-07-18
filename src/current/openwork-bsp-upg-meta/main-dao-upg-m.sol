@@ -36,11 +36,12 @@ interface IThirdChainBridge {
         bytes calldata _options
     ) external view returns (uint256 fee);
 
-    function sendUpgradeCommand(
-        uint32 targetChainId,
-        address targetProxy, 
-        address newImplementation
-    ) external;
+  function sendUpgradeCommand(
+    uint32 targetChainId,
+    address targetProxy, 
+    address newImplementation,
+    bytes calldata _options
+) external payable;
 }
 
 interface IUpgradeable {
@@ -580,17 +581,16 @@ contract MainDAO is
         payable(owner()).transfer(balance);
     }
 
-    function upgradeContract(
+ function upgradeContract(
     uint32 targetChainId, 
     address targetProxy, 
-    address newImplementation
-) external onlyGovernance {
+    address newImplementation,
+    bytes calldata _options
+) external payable onlyOwner {
     if (targetChainId == chainId) {
-        // Same chain (rewards contract) - call directly
         IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
     } else {
-        // Cross-chain upgrade - use bridge
-        bridge.sendUpgradeCommand(targetChainId, targetProxy, newImplementation);
+        bridge.sendUpgradeCommand{value: msg.value}(targetChainId, targetProxy, newImplementation, _options);
     }
 }
     
