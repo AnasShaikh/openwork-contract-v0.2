@@ -35,7 +35,18 @@ interface IThirdChainBridge {
         bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee);
+
+    function sendUpgradeCommand(
+        uint32 targetChainId,
+        address targetProxy, 
+        address newImplementation
+    ) external;
 }
+
+interface IUpgradeable {
+    function upgradeFromDAO(address newImplementation) external;
+}
+
 
 contract MainDAO is 
     Initializable,
@@ -568,6 +579,20 @@ contract MainDAO is
         require(balance > 0, "No balance to withdraw");
         payable(owner()).transfer(balance);
     }
+
+    function upgradeContract(
+    uint32 targetChainId, 
+    address targetProxy, 
+    address newImplementation
+) external onlyGovernance {
+    if (targetChainId == chainId) {
+        // Same chain (rewards contract) - call directly
+        IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
+    } else {
+        // Cross-chain upgrade - use bridge
+        bridge.sendUpgradeCommand(targetChainId, targetProxy, newImplementation);
+    }
+}
     
     function emergencyWithdrawTokens(uint256 amount) external onlyOwner {
         require(openworkToken.transfer(owner(), amount), "Token transfer failed");

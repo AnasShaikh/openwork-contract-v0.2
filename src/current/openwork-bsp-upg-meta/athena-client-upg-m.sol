@@ -120,8 +120,14 @@ contract AthenaClientContract is
         minDisputeFee = 50 * 10**6; // 50 USDT (6 decimals)
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-    
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
+
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}
     // ==================== MESSAGE HANDLERS ====================
     
     function handleFinalizeDispute(string memory disputeId, bool winningSide) external {
@@ -413,7 +419,6 @@ contract AthenaClientContract is
         require(balance > 0, "No balance to withdraw");
         payable(owner()).transfer(balance);
     }
-
     
     
     function emergencyWithdrawUSDT() external onlyOwner {
