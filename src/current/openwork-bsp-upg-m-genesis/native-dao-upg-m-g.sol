@@ -13,6 +13,7 @@ import "@openzeppelin/contracts/governance/IGovernor.sol";
 interface INativeOpenWorkJobContract {
     function getUserEarnedTokens(address user) external view returns (uint256);
     function getUserRewardInfo(address user) external view returns (uint256 cumulativeEarnings, uint256 totalTokens);
+    function incrementGovernanceAction(address user) external;
 }
 
 // UPDATED INTERFACE for the bridge to support new functionality
@@ -84,7 +85,6 @@ contract CrossChainNativeDAO is
     event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     event EarnedTokensUsedForGovernance(address indexed user, uint256 earnedTokens, string action);
     event GovernanceActionNotified(address indexed user, string action);
-    event GovernanceActionSentToBridge(address indexed user, string action, uint256 fee);
     event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -135,35 +135,6 @@ function upgradeFromDAO(address newImplementation) external {
         address oldBridge = address(bridge);
         bridge = INativeChainBridge(_bridge);
         emit BridgeUpdated(oldBridge, _bridge);
-    }
-    
-    // ==================== FIXED CROSS-CHAIN MESSAGING VIA BRIDGE ====================
-    
-    /**
-     * @notice Send governance notification via Bridge (FIXED VERSION)
-     * @param account Address of the user who performed governance action
-     * @param actionType Type of governance action
-     * @param _options LayerZero options for the message
-     */
-    function _sendGovernanceNotificationViaBridge(
-        address account, 
-        string memory actionType,
-        bytes memory _options
-    ) internal {
-        if (address(bridge) == address(0)) {
-            emit CrossContractCallFailed(account, "Bridge not set");
-            return;
-        }
-        
-        // Prepare payload for rewards chain
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        
-        // Send directly using user-provided msg.value and options (just like LOWJC)
-        try bridge.sendToRewardsChain{value: msg.value}("notifyGovernanceAction", payload, _options) {
-            emit GovernanceActionSentToBridge(account, actionType, msg.value);
-        } catch {
-            emit CrossContractCallFailed(account, "Failed to send governance action to Bridge");
-        }
     }
     
     // ==================== GOVERNANCE ELIGIBILITY CHECK FUNCTIONS ====================
@@ -378,34 +349,9 @@ function upgradeFromDAO(address newImplementation) external {
         return super.hasVoted(proposalId, account);
     }
     
-    // ==================== FIXED VOTING FUNCTIONS ====================
+    // ==================== VOTING FUNCTIONS ====================
     
-    // FIXED: New function with user-provided options for cross-chain governance notifications
-    function castVoteWithOptions(
-        uint256 proposalId, 
-        uint8 support, 
-        string calldata reason,
-        bytes calldata _options
-    ) external payable returns (uint256) {
-        require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
-        
-        // Emit event if user is using earned tokens (no active stake above threshold)
-        if (!stakes[msg.sender].isActive || stakes[msg.sender].amount < votingStakeThreshold) {
-            if (address(nowjContract) != address(0)) {
-                uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
-                if (earnedTokens >= votingRewardThreshold) {
-                    emit EarnedTokensUsedForGovernance(msg.sender, earnedTokens, "vote");
-                }
-            }
-        }
-        
-        // FIXED: Send governance notification via Bridge
-        _sendGovernanceNotificationViaBridge(msg.sender, "vote", _options);
-        
-        return _castVote(proposalId, msg.sender, support, reason, "");
-    }
-    
-    // Modified original _castVote to NOT make cross-chain calls (they're handled in castVoteWithOptions)
+    // REVISED: _castVote now includes NOWJC governance action increment
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason, bytes memory params)
         internal override returns (uint256) {
         
@@ -421,39 +367,14 @@ function upgradeFromDAO(address newImplementation) external {
             }
         }
         
+        // IMPORTANT: Call local NOWJC to increment governance action
+        require(address(nowjContract) != address(0), "NOWJ contract not set");
+        nowjContract.incrementGovernanceAction(account);
+        
         return super._castVote(proposalId, account, support, reason, params);
     }
     
-    // FIXED: New function with user-provided options for cross-chain governance notifications
-    function proposeWithOptions(
-        address[] memory targets, 
-        uint256[] memory values, 
-        bytes[] memory calldatas, 
-        string memory description,
-        bytes calldata _options
-    ) external payable returns (uint256) {
-        
-        require(canPropose(msg.sender), "Insufficient stake or earned tokens to propose");
-        
-        // Emit event if user is using earned tokens (no active stake above threshold)
-        if (!stakes[msg.sender].isActive || stakes[msg.sender].amount < proposalStakeThreshold) {
-            if (address(nowjContract) != address(0)) {
-                uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
-                if (earnedTokens >= proposalRewardThreshold) {
-                    emit EarnedTokensUsedForGovernance(msg.sender, earnedTokens, "propose");
-                }
-            }
-        }
-        
-        // FIXED: Send governance notification via Bridge
-        _sendGovernanceNotificationViaBridge(msg.sender, "propose", _options);
-        
-        uint256 proposalId = super.propose(targets, values, calldatas, description);
-        proposalIds.push(proposalId);
-        return proposalId;
-    }
-    
-    // Modified original propose to NOT make cross-chain calls (they're handled in proposeWithOptions)
+    // REVISED: propose now includes NOWJC governance action increment
     function propose(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description)
         public override returns (uint256) {
         
@@ -468,6 +389,10 @@ function upgradeFromDAO(address newImplementation) external {
                 }
             }
         }
+        
+        // IMPORTANT: Call local NOWJC to increment governance action
+        require(address(nowjContract) != address(0), "NOWJ contract not set");
+        nowjContract.incrementGovernanceAction(msg.sender);
         
         uint256 proposalId = super.propose(targets, values, calldatas, description);
         proposalIds.push(proposalId);
@@ -525,18 +450,6 @@ function upgradeFromDAO(address newImplementation) external {
     
     function getProposalCount() external view returns (uint256) {
         return proposalIds.length;
-    }
-    
-    // ==================== QUOTE FUNCTIONS ====================
-    
-    function quoteGovernanceNotification(
-        address account,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        if (address(bridge) == address(0)) return 0;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        return bridge.quoteRewardsChain(payload, _options);
     }
     
     // ==================== ADMIN FUNCTIONS ====================
