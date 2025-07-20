@@ -34,6 +34,7 @@ interface INativeOpenWorkJobContract {
     function handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external;
     function handleRate(address rater, string memory jobId, address userToRate, uint256 rating) external;
     function handleAddPortfolio(address user, string memory portfolioHash) external;
+    function incrementGovernanceAction(address user) external;
 }
 
 interface IUpgradeable {
@@ -123,22 +124,21 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         (string memory functionName) = abi.decode(_message, (string));
         
         // ==================== UPGRADE HANDLING ====================
-  if (keccak256(bytes(functionName)) == keccak256("upgradeFromDAO")) {
-    require(_origin.srcEid == mainChainEid, "Upgrade commands only from main chain");
-    (, address targetProxy, address newImplementation) = 
-        abi.decode(_message, (string, address, address));
-    require(targetProxy != address(0), "Invalid target proxy address");
-    require(newImplementation != address(0), "Invalid implementation address");
-    IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
-    emit UpgradeExecuted(targetProxy, newImplementation, _origin.srcEid);
-}
+        if (keccak256(bytes(functionName)) == keccak256("upgradeFromDAO")) {
+            require(_origin.srcEid == mainChainEid, "Upgrade commands only from main chain");
+            (, address targetProxy, address newImplementation) = 
+                abi.decode(_message, (string, address, address));
+            require(targetProxy != address(0), "Invalid target proxy address");
+            require(newImplementation != address(0), "Invalid implementation address");
+            IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
+            emit UpgradeExecuted(targetProxy, newImplementation, _origin.srcEid);
+        }
 
-        
         // ==================== NATIVE DAO MESSAGES ====================
         else if (keccak256(bytes(functionName)) == keccak256(bytes("updateStakeData"))) {
-        require(nativeDaoContract != address(0), "Native DAO contract not set");
-        (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
-        INativeDAO(nativeDaoContract).updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
+            require(nativeDaoContract != address(0), "Native DAO contract not set");
+            (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
+            INativeDAO(nativeDaoContract).updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
         }
 
         // ==================== NATIVE ATHENA MESSAGES ====================
@@ -197,6 +197,13 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleAddPortfolio(user, portfolioHash);
+        }
+        
+        // ==================== NEW: GOVERNANCE ACTION HANDLING ====================
+        else if (keccak256(bytes(functionName)) == keccak256(bytes("incrementGovernanceAction"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address user) = abi.decode(_message, (string, address));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).incrementGovernanceAction(user);
         }
         
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
@@ -269,43 +276,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, _dstEid, _payload);
     }
     
-    // NEW: Send to two chains simultaneously
-    function sendToTwoChains(
-        string memory _functionName,
-        bytes memory _rewardsPayload,
-        bytes memory _athenaClientPayload,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
-    ) external payable onlyAuthorized {
-        // Calculate total fees upfront
-        MessagingFee memory fee1 = _quote(rewardsChainEid, _rewardsPayload, _rewardsOptions, false);
-        MessagingFee memory fee2 = _quote(athenaClientChainEid, _athenaClientPayload, _athenaClientOptions, false);
-        uint256 totalFee = fee1.nativeFee + fee2.nativeFee;
-        
-        require(msg.value >= totalFee, "Insufficient fee provided");
-        
-        // Send to rewards chain
-        _lzSend(
-            rewardsChainEid,
-            _rewardsPayload,
-            _rewardsOptions,
-            fee1,
-            payable(msg.sender)
-        );
-        
-        // Send to athena client chain
-        _lzSend(
-            athenaClientChainEid,
-            _athenaClientPayload,
-            _athenaClientOptions,
-            fee2,
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent(_functionName, rewardsChainEid, _rewardsPayload);
-        emit CrossChainMessageSent(_functionName, athenaClientChainEid, _athenaClientPayload);
-    }
-    
     function sendToThreeChains(
         string memory _functionName,
         uint32 _dstEid1,
@@ -369,21 +339,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     ) external view returns (uint256 fee) {
         MessagingFee memory msgFee = _quote(_dstEid, _payload, _options, false);
         return msgFee.nativeFee;
-    }
-    
-    // NEW: Quote for two chains
-    function quoteTwoChains(
-        bytes calldata _rewardsPayload,
-        bytes calldata _athenaClientPayload,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
-    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 athenaClientFee) {
-        MessagingFee memory msgFee1 = _quote(rewardsChainEid, _rewardsPayload, _rewardsOptions, false);
-        MessagingFee memory msgFee2 = _quote(athenaClientChainEid, _athenaClientPayload, _athenaClientOptions, false);
-        
-        rewardsFee = msgFee1.nativeFee;
-        athenaClientFee = msgFee2.nativeFee;
-        totalFee = rewardsFee + athenaClientFee;
     }
     
     function quoteThreeChains(

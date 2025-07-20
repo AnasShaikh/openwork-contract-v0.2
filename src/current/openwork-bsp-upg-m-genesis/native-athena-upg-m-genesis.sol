@@ -27,6 +27,7 @@ interface INativeOpenWorkJobContract {
         uint256 selectedApplicationId
     );
     function jobExists(string memory _jobId) external view returns (bool);
+    function incrementGovernanceAction(address user) external;
 }
 
 // Interface for OpenworkGenesis storage contract
@@ -237,8 +238,6 @@ contract NativeAthena is
     event DisputeRaised(string indexed jobId, address indexed disputeRaiser, uint256 fees);
     event SkillVerificationSubmitted(address indexed applicant, string targetOracleName, uint256 feeAmount);
     event AskAthenaSubmitted(address indexed applicant, string targetOracle, string fees);
-    event GovernanceActionReceivedFromNativeDAO(address indexed user, string action);
-    event GovernanceActionForwardedToRewards(address indexed user, string action, uint256 fee);
     event RewardsChainEidUpdated(uint32 oldEid, uint32 newEid);
     event AthenaClientChainEidUpdated(uint32 oldEid, uint32 newEid);
     
@@ -344,47 +343,6 @@ contract NativeAthena is
         uint32 oldEid = athenaClientChainEid;
         athenaClientChainEid = _chainEid;
         emit AthenaClientChainEidUpdated(oldEid, _chainEid);
-    }
-    
-    // ==================== FIXED LOCAL INTERFACE FOR NATIVE DAO ====================
-    
-    /**
-     * @notice Function for Native DAO to notify governance actions (called locally) - FIXED VERSION
-     * @param account Address of the user who performed governance action
-     * @param actionType Type of governance action (propose, vote, etc.)
-     * @param _rewardsOptions LayerZero options for sending to Rewards Contract
-     */
-    function notifyGovernanceActionFromNativeDAO(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
-    ) external payable {
-        require(msg.sender == daoContract, "Only Native DAO can call this");
-        
-        emit GovernanceActionReceivedFromNativeDAO(account, actionType);
-        
-        // Forward to Rewards Contract via bridge
-        _sendGovernanceNotificationToRewards(account, actionType, _rewardsOptions);
-    }
-    
-    /**
-     * @notice Send governance notification to Rewards Contract via bridge (FIXED VERSION)
-     * @param account Address of the user
-     * @param actionType Type of action
-     * @param _rewardsOptions LayerZero options
-     */
-    function _sendGovernanceNotificationToRewards(
-        address account,
-        string memory actionType,
-        bytes calldata _rewardsOptions
-    ) internal {
-        require(address(bridge) != address(0), "Bridge not set");
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        
-        // FIXED: Send directly using user-provided msg.value and options (just like LOWJC)
-        bridge.sendToRewardsChain{value: msg.value}("notifyGovernanceAction", payload, _rewardsOptions);
-        emit GovernanceActionForwardedToRewards(account, actionType, msg.value);
     }
     
     // ==================== VOTING ELIGIBILITY FUNCTIONS ====================
@@ -511,16 +469,14 @@ contract NativeAthena is
         genesis.addSkillVerifiedAddress(application.targetOracleName, application.applicant);
     }
     
-    // ==================== FIXED VOTING FUNCTIONS - USING sendToTwoChains ====================
+    // ==================== REVISED VOTING FUNCTIONS - LOCAL CALLS ONLY ====================
     
     function vote(
         VotingType _votingType, 
         string memory _disputeId, 
         bool _voteFor, 
-        address _claimAddress, 
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
-    ) external payable {
+        address _claimAddress
+    ) external {
         // Check if user can vote (has sufficient stake OR earned tokens)
         require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
         require(_claimAddress != address(0), "Claim address cannot be zero");
@@ -542,13 +498,13 @@ contract NativeAthena is
             }
         }
         
-        // Route to appropriate voting function
+        // Route to appropriate voting function - no cross-chain calls needed
         if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
+            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight);
         } else if (_votingType == VotingType.SkillVerification) {
-            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
+            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight);
         } else if (_votingType == VotingType.AskAthena) {
-            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight, _rewardsOptions, _athenaClientOptions);
+            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight);
         }
     }
     
@@ -556,9 +512,7 @@ contract NativeAthena is
         string memory _disputeId, 
         bool _voteFor, 
         address _claimAddress, 
-        uint256 voteWeight,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
+        uint256 voteWeight
     ) internal {
         // Get dispute from genesis
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
@@ -577,29 +531,19 @@ contract NativeAthena is
             genesis.updateDisputeVotes(_disputeId, dispute.votesFor, dispute.votesAgainst + voteWeight);
         }
         
-        // FIXED: Use bridge's sendToTwoChains - it handles all fee calculation and distribution
-        require(address(bridge) != address(0), "Bridge not set");
+        // REVISED: Call local NOWJC contract instead of bridge to rewards
+        if (address(nowjContract) != address(0)) {
+            nowjContract.incrementGovernanceAction(msg.sender);
+        }
         
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        
-        // Let the bridge handle fee calculation and distribution
-        bridge.sendToTwoChains{value: msg.value}(
-            "voteOnDispute",
-            rewardsPayload,
-            athenaClientPayload,
-            _rewardsOptions,
-            _athenaClientOptions
-        );
+        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
     }
     
     function _voteOnSkillVerification(
         string memory _disputeId, 
         bool _voteFor, 
         address _claimAddress, 
-        uint256 voteWeight,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
+        uint256 voteWeight
     ) internal {
         uint256 applicationId = stringToUint(_disputeId);
         
@@ -620,29 +564,19 @@ contract NativeAthena is
             genesis.updateSkillApplicationVotes(applicationId, application.votesFor, application.votesAgainst + voteWeight);
         }
         
-        // FIXED: Use bridge's sendToTwoChains - it handles all fee calculation and distribution
-        require(address(bridge) != address(0), "Bridge not set");
+        // REVISED: Call local NOWJC contract instead of bridge to rewards
+        if (address(nowjContract) != address(0)) {
+            nowjContract.incrementGovernanceAction(msg.sender);
+        }
         
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        
-        // Let the bridge handle fee calculation and distribution
-        bridge.sendToTwoChains{value: msg.value}(
-            "voteOnSkillVerification",
-            rewardsPayload,
-            athenaClientPayload,
-            _rewardsOptions,
-            _athenaClientOptions
-        );
+        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
     }
     
     function _voteOnAskAthena(
         string memory _disputeId, 
         bool _voteFor, 
         address _claimAddress, 
-        uint256 voteWeight,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
+        uint256 voteWeight
     ) internal {
         uint256 athenaId = stringToUint(_disputeId);
         
@@ -663,23 +597,16 @@ contract NativeAthena is
             genesis.updateAskAthenaVotes(athenaId, athenaApp.votesFor, athenaApp.votesAgainst + voteWeight);
         }
         
-        // FIXED: Use bridge's sendToTwoChains - it handles all fee calculation and distribution
-        require(address(bridge) != address(0), "Bridge not set");
+        // REVISED: Call local NOWJC contract instead of bridge to rewards
+        if (address(nowjContract) != address(0)) {
+            nowjContract.incrementGovernanceAction(msg.sender);
+        }
         
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaClientPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        
-        // Let the bridge handle fee calculation and distribution
-        bridge.sendToTwoChains{value: msg.value}(
-            "voteOnAskAthena",
-            rewardsPayload,
-            athenaClientPayload,
-            _rewardsOptions,
-            _athenaClientOptions
-        );
+        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
     }
     
-    // FIXED: Function to finalize dispute - also uses sendToAthenaClientChain
+    // ==================== REVISED FINALIZE DISPUTE FUNCTION ====================
+    
     function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
         // Get dispute from genesis
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
@@ -692,55 +619,21 @@ contract NativeAthena is
         bool result = dispute.votesFor > dispute.votesAgainst;
         genesis.finalizeDispute(_disputeId, result);
         
-        // FIXED: Send message to AthenaClient - WILL REVERT ON FAILURE
+        // REVISED: Send dispute result AND all voting data to AthenaClient
         require(address(bridge) != address(0), "Bridge not set");
         require(msg.value > 0, "Fee required for cross-chain call");
         
-        bytes memory payload = abi.encode("finalizeDispute", _disputeId, result);
-        bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions);
+        // Include all dispute voting data in the payload
+        bytes memory payload = abi.encode(
+            "finalizeDisputeWithVotes", 
+            _disputeId, 
+            result,
+            dispute.votesFor,
+            dispute.votesAgainst
+        );
+        bridge.sendToAthenaClientChain{value: msg.value}("finalizeDisputeWithVotes", payload, _athenaClientOptions);
         
         emit DisputeFinalized(_disputeId, result, dispute.votesFor, dispute.votesAgainst);
-    }
-    
-    // ==================== QUOTE FUNCTIONS ====================
-    
-    function quoteGovernanceNotification(
-        address account,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        if (address(bridge) == address(0)) return 0;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        return bridge.quoteRewardsChain(payload, _options);
-    }
-    
-    function quoteVoteFees(
-        VotingType /* _votingType */,
-        string memory _disputeId,
-        address _claimAddress,
-        bool _voteFor,
-        bytes calldata _rewardsOptions,
-        bytes calldata _athenaClientOptions
-    ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 athenaClientFee) {
-        // Calculate vote weight for the caller
-        uint256 voteWeight = getUserVotingPower(msg.sender);
-        
-        // Prepare payloads
-        bytes memory rewardsPayload = abi.encode("notifyGovernanceAction", msg.sender);
-        bytes memory athenaPayload = abi.encode("recordVote", _disputeId, msg.sender, _claimAddress, voteWeight, _voteFor);
-        
-        // Get quote from bridge
-        return bridge.quoteTwoChains(rewardsPayload, athenaPayload, _rewardsOptions, _athenaClientOptions);
-    }
-    
-    function quoteNativeDAOGovernanceForwarding(
-        address account,
-        bytes calldata _rewardsOptions
-    ) external view returns (uint256 fee) {
-        if (address(bridge) == address(0)) return 0;
-        
-        bytes memory payload = abi.encode("notifyGovernanceAction", account);
-        return bridge.quoteRewardsChain(payload, _rewardsOptions);
     }
     
     // ==================== UTILITY FUNCTIONS ====================
