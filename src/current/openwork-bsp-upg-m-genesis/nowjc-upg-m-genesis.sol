@@ -80,6 +80,15 @@ interface IOpenworkGenesis {
 
 }
 
+    interface INativeBridge {
+        function sendSyncRewardsData(
+            uint256 totalPlatformPayments, 
+            uint256 userTotalOWTokens, 
+            uint256 userGovernanceActions,
+            bytes calldata _options
+        ) external payable;
+    }
+
 contract NativeOpenWorkJobContract is 
     Initializable,
     OwnableUpgradeable,
@@ -765,6 +774,22 @@ contract NativeOpenWorkJobContract is
     genesis.incrementUserGovernanceActions(user);
     emit GovernanceActionIncremented(user, genesis.getUserGovernanceActions(user));
     }   
+
+    function syncRewardsData(bytes calldata _options) external payable {
+        require(bridge != address(0), "Bridge not set");
+        
+        uint256 totalPlatformPayments = genesis.totalPlatformPayments();
+        uint256 userTotalOWTokens = genesis.getUserEarnedTokens(msg.sender);
+        uint256 userGovernanceActions = genesis.getUserGovernanceActions(msg.sender);
+        
+        // Send to native bridge
+        INativeBridge(bridge).sendSyncRewardsData{value: msg.value}(
+            totalPlatformPayments, 
+            userTotalOWTokens, 
+            userGovernanceActions,
+            _options
+        );
+    }
     
     function getRating(address _user) public view returns (uint256) {
         uint256[] memory ratings = genesis.getUserRatings(_user);

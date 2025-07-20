@@ -242,6 +242,30 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         
         emit CrossChainMessageSent(_functionName, athenaClientChainEid, _payload);
     }
+
+    function sendSyncRewardsData(
+    uint256 totalPlatformPayments, 
+    uint256 userTotalOWTokens, 
+    uint256 userGovernanceActions,
+    bytes calldata _options
+) external payable onlyAuthorized {
+    bytes memory payload = abi.encode(
+        "SyncRewards",
+        totalPlatformPayments,
+        userTotalOWTokens,
+        userGovernanceActions
+    );
+    
+    _lzSend(
+        mainChainEid,
+        payload,
+        _options,
+        MessagingFee(msg.value, 0),
+        payable(msg.sender)
+    );
+    
+    emit CrossChainMessageSent("SyncRewards", mainChainEid, payload);
+    }
     
     function sendToLowjcChain(
         string memory _functionName,
@@ -340,6 +364,22 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         MessagingFee memory msgFee = _quote(_dstEid, _payload, _options, false);
         return msgFee.nativeFee;
     }
+
+    function quoteSyncRewardsData(
+    uint256 totalPlatformPayments, 
+    uint256 userTotalOWTokens, 
+    uint256 userGovernanceActions,
+    bytes calldata _options
+) external view returns (uint256 fee) {
+    bytes memory payload = abi.encode(
+        "SyncRewards",
+        totalPlatformPayments,
+        userTotalOWTokens,
+        userGovernanceActions
+    );
+    MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
+    return msgFee.nativeFee;
+}
     
     function quoteThreeChains(
         uint32 _dstEid1,
