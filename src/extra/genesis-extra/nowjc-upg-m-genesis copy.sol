@@ -44,7 +44,7 @@ interface IOpenworkGenesis {
         uint256 selectedApplicationId;
     }
 
-    // Job and profile management
+    // Setters
     function setProfile(address user, string memory ipfsHash, address referrer) external;
     function addPortfolio(address user, string memory portfolioHash) external;
     function setJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external;
@@ -57,13 +57,7 @@ interface IOpenworkGenesis {
     function addWorkSubmission(string memory jobId, string memory submissionHash) external;
     function updateJobTotalPaid(string memory jobId, uint256 amount) external;
     function setJobRating(string memory jobId, address user, uint256 rating) external;
-    
-    // Legacy reward functions (for backward compatibility)
     function setUserTotalOWTokens(address user, uint256 tokens) external;
-    function incrementUserGovernanceActions(address user) external;
-    function incrementUserGovernanceActionsInBand(address user, uint256 band) external;
-    function setUserGovernanceActions(address user, uint256 actions) external;
-    function updateUserClaimData(address user, uint256 claimedJobTokens, uint256 claimedGovernanceTokens) external;
     
     // Getters
     function getProfile(address user) external view returns (Profile memory);
@@ -78,61 +72,22 @@ interface IOpenworkGenesis {
     function hasProfile(address user) external view returns (bool);
     function getUserReferrer(address user) external view returns (address);
     function getUserEarnedTokens(address user) external view returns (uint256);
-    function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256);
-    function getUserTotalGovernanceActions(address user) external view returns (uint256);
+    function getUserGovernanceActions(address user) external view returns (uint256);
+    function setUserGovernanceActions(address user, uint256 actions) external;
+    function incrementUserGovernanceActions(address user) external;
     function getUserRewardInfo(address user) external view returns (uint256 totalTokens, uint256 governanceActions);
     function totalPlatformPayments() external view returns (uint256);
+
 }
 
-// Interface for the RewardsContract
-interface IOpenWorkRewards {
-    function processJobPayment(
-        address jobGiver,
-        address jobTaker, 
-        uint256 amount,
-        uint256 newPlatformTotal
-    ) external returns (uint256[] memory tokensAwarded);
-    
-    function recordGovernanceAction(address user) external;
-    function calculateUserClaimableTokens(address user) external view returns (uint256);
-    function claimTokens(address user, uint256 amount) external returns (bool);
-    function getUserTotalTokensEarned(address user) external view returns (uint256);
-    function getUserTotalClaimableTokens(address user) external view returns (uint256);
-    function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256);
-    function getUserTotalGovernanceActions(address user) external view returns (uint256);
-    function calculateTokensForRange(uint256 fromAmount, uint256 toAmount) external view returns (uint256);
-    function getCurrentBand() external view returns (uint256);
-    function getPlatformBandInfo() external view returns (
-        uint256 currentBand,
-        uint256 currentTotal,
-        uint256 bandMinAmount,
-        uint256 bandMaxAmount,
-        uint256 governanceRewardRate
-    );
-    
-    // NEW: Get user's band-specific breakdown for syncing
-    function getUserRewardsBreakdown(address user) external view returns (
-        uint256[] memory bands,
-        uint256[] memory tokensEarned,
-        uint256[] memory tokensClaimable,
-        uint256[] memory tokensClaimed,
-        uint256[] memory governanceActions
-    );
-}
-
-interface INativeBridge {
-    function sendSyncRewardsData(
-        uint256 totalPlatformPayments, 
-        uint256 userTotalOWTokens, 
-        uint256 userGovernanceActions,
-        uint256 currentPlatformBand,
-        uint256[] calldata userBands,
-        uint256[] calldata tokensPerBand,
-        uint256[] calldata governanceActionsPerBand,
-        uint256[] calldata claimablePerBand,
-        bytes calldata _options
-    ) external payable;
-}
+    interface INativeBridge {
+        function sendSyncRewardsData(
+            uint256 totalPlatformPayments, 
+            uint256 userTotalOWTokens, 
+            uint256 userGovernanceActions,
+            bytes calldata _options
+        ) external payable;
+    }
 
 contract NativeOpenWorkJobContract is 
     Initializable,
@@ -181,20 +136,26 @@ contract NativeOpenWorkJobContract is
         uint256 selectedApplicationId;
     }
 
+    // ==================== REWARDS CALCULATION STRUCTURES ====================
+    
+    // Reward bands structure for job-based rewards
+    struct RewardBand {
+        uint256 minAmount;      // Minimum cumulative amount for this band
+        uint256 maxAmount;      // Maximum cumulative amount for this band
+        uint256 owPerDollar;    // OW tokens per USDT (scaled by 1e18)
+    }
+
     // ==================== STATE VARIABLES ====================
     
     // Genesis storage contract
     IOpenworkGenesis public genesis;
     
-    // RewardsContract reference
-    IOpenWorkRewards public rewardsContract;
+    // Reward bands array (kept in this contract for calculations)
+    RewardBand[] public rewardBands;
     
     // Bridge reference
     address public bridge;
     
-    // NEW: Track last synced band per user to avoid duplicate syncing
-    mapping(address => uint256) public userLastSyncedBand;
-
     // ==================== EVENTS ====================
     
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
@@ -210,29 +171,21 @@ contract NativeOpenWorkJobContract is
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
     event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
     event GenesisUpdated(address indexed oldGenesis, address indexed newGenesis);
-    event RewardsContractUpdated(address indexed oldRewards, address indexed newRewards);
-    event GovernanceActionIncremented(address indexed user, uint256 newGovernanceActionCount, uint256 indexed band);
+    event GovernanceActionIncremented(address indexed user, uint256 newGovernanceActionCount);
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newPlatformTotal, uint256 newUserTotalTokens);
-    event ClaimDataUpdated(address indexed user, uint256 claimedJobTokens, uint256 claimedGovernanceTokens);
-    event RewardsDataSynced(address indexed user, uint256 bandsCount, uint256 totalTokens, uint256 lastSyncedBand); // NEW
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initialize(
-        address _owner, 
-        address _bridge, 
-        address _genesis,
-        address _rewardsContract
-    ) public initializer {
+    function initialize(address _owner, address _bridge, address _genesis) public initializer {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
         
         bridge = _bridge;
         genesis = IOpenworkGenesis(_genesis);
-        rewardsContract = IOpenWorkRewards(_rewardsContract);
+        _initializeRewardBands();
     }
 
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
@@ -256,12 +209,6 @@ contract NativeOpenWorkJobContract is
         address oldGenesis = address(genesis);
         genesis = IOpenworkGenesis(_genesis);
         emit GenesisUpdated(oldGenesis, _genesis);
-    }
-    
-    function setRewardsContract(address _rewardsContract) external onlyOwner {
-        address oldRewards = address(rewardsContract);
-        rewardsContract = IOpenWorkRewards(_rewardsContract);
-        emit RewardsContractUpdated(oldRewards, _rewardsContract);
     }
 
     // ==================== MESSAGE HANDLERS ====================
@@ -340,14 +287,49 @@ contract NativeOpenWorkJobContract is
     function handleReleasePayment(address jobGiver, string memory jobId, uint256 amount) external {
         require(msg.sender == bridge, "Only bridge can call this function");
         
-        // Update job total paid in Genesis
         genesis.updateJobTotalPaid(jobId, amount);
 
-        // Delegate to RewardsContract for token calculation and distribution
-        _processRewardsForPayment(jobGiver, jobId, amount);
+        // ==================== REWARDS CALCULATION ====================
+        IOpenworkGenesis.Job memory job = genesis.getJob(jobId);
+        address jobTaker = job.selectedApplicant;
+        
+        // Get referrers from genesis
+        address jobGiverReferrer = genesis.getUserReferrer(jobGiver);
+        address jobTakerReferrer = genesis.getUserReferrer(jobTaker);
+        
+        // Calculate reward distribution (same logic as before)
+        uint256 jobGiverAmount = amount;
+        uint256 jobGiverReferrerAmount = 0;
+        uint256 jobTakerReferrerAmount = 0;
+        
+        // Deduct referral bonuses from job giver's amount
+        if (jobGiverReferrer != address(0) && jobGiverReferrer != jobGiver) {
+            jobGiverReferrerAmount = amount / 10; // 10% referral bonus
+            jobGiverAmount -= jobGiverReferrerAmount;
+        }
+        
+        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
+            jobTakerReferrerAmount = amount / 10; // 10% referral bonus
+            jobGiverAmount -= jobTakerReferrerAmount;
+        }
+        
+        // Accumulate earnings for job giver (after deducting referral amounts)
+        if (jobGiverAmount > 0) {
+            _accumulateJobTokens(jobGiver, jobGiverAmount);
+        }
+        
+        // Accumulate earnings for referrers
+        if (jobGiverReferrerAmount > 0) {
+            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
+        }
+        
+        if (jobTakerReferrerAmount > 0) {
+            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
+        }
+        // ==================== END REWARDS CALCULATION ====================
         
         // Check if job should be completed
-        IOpenworkGenesis.Job memory job = genesis.getJob(jobId);
+        job = genesis.getJob(jobId); // Re-fetch updated job
         if (job.currentMilestone == job.finalMilestones.length) {
             genesis.updateJobStatus(jobId, IOpenworkGenesis.JobStatus.Completed);
             emit JobStatusChanged(jobId, JobStatus.Completed);
@@ -369,13 +351,48 @@ contract NativeOpenWorkJobContract is
     function handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external {
         require(msg.sender == bridge, "Only bridge can call this function");
         
-        // Update job total paid in Genesis
         genesis.updateJobTotalPaid(jobId, releasedAmount);
 
-        // Delegate to RewardsContract for token calculation and distribution
-        _processRewardsForPayment(jobGiver, jobId, releasedAmount);
-        
+        // ==================== REWARDS CALCULATION ====================
         IOpenworkGenesis.Job memory job = genesis.getJob(jobId);
+        address jobTaker = job.selectedApplicant;
+        
+        // Get referrers from genesis
+        address jobGiverReferrer = genesis.getUserReferrer(jobGiver);
+        address jobTakerReferrer = genesis.getUserReferrer(jobTaker);
+        
+        // Calculate reward distribution (same logic as before)
+        uint256 jobGiverAmount = releasedAmount;
+        uint256 jobGiverReferrerAmount = 0;
+        uint256 jobTakerReferrerAmount = 0;
+        
+        // Deduct referral bonuses from job giver's amount
+        if (jobGiverReferrer != address(0) && jobGiverReferrer != jobGiver) {
+            jobGiverReferrerAmount = releasedAmount / 10; // 10% referral bonus
+            jobGiverAmount -= jobGiverReferrerAmount;
+        }
+        
+        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
+            jobTakerReferrerAmount = releasedAmount / 10; // 10% referral bonus
+            jobGiverAmount -= jobTakerReferrerAmount;
+        }
+        
+        // Accumulate earnings for job giver (after deducting referral amounts)
+        if (jobGiverAmount > 0) {
+            _accumulateJobTokens(jobGiver, jobGiverAmount);
+        }
+        
+        // Accumulate earnings for referrers
+        if (jobGiverReferrerAmount > 0) {
+            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
+        }
+        
+        if (jobTakerReferrerAmount > 0) {
+            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
+        }
+        // ==================== END REWARDS CALCULATION ====================
+        
+        job = genesis.getJob(jobId); // Re-fetch for current milestone
         genesis.setJobCurrentMilestone(jobId, job.currentMilestone + 1);
         
         job = genesis.getJob(jobId); // Re-fetch updated job
@@ -412,163 +429,106 @@ contract NativeOpenWorkJobContract is
         emit PortfolioAdded(user, portfolioHash);
     }
 
-    function handleUpdateUserClaimData(
-        address user, 
-        uint256 claimedJobTokens, 
-        uint256 claimedGovernanceTokens
-    ) external {
-        require(msg.sender == bridge, "Only bridge can call this function");
-        
-        genesis.updateUserClaimData(user, claimedJobTokens, claimedGovernanceTokens);
-        emit ClaimDataUpdated(user, claimedJobTokens, claimedGovernanceTokens);
+    // ==================== REWARDS INITIALIZATION ====================
+    
+    function _initializeRewardBands() private {
+        // Job-based reward bands (same as before)
+        rewardBands.push(RewardBand(0, 500 * 1e6, 100000 * 1e18));
+        rewardBands.push(RewardBand(500 * 1e6, 1000 * 1e6, 50000 * 1e18));
+        rewardBands.push(RewardBand(1000 * 1e6, 2000 * 1e6, 25000 * 1e18));
+        rewardBands.push(RewardBand(2000 * 1e6, 4000 * 1e6, 12500 * 1e18));
+        rewardBands.push(RewardBand(4000 * 1e6, 8000 * 1e6, 6250 * 1e18));
+        rewardBands.push(RewardBand(8000 * 1e6, 16000 * 1e6, 3125 * 1e18));
+        rewardBands.push(RewardBand(16000 * 1e6, 32000 * 1e6, 1562 * 1e18));
+        rewardBands.push(RewardBand(32000 * 1e6, 64000 * 1e6, 781 * 1e18));
+        rewardBands.push(RewardBand(64000 * 1e6, 128000 * 1e6, 391 * 1e18));
+        rewardBands.push(RewardBand(128000 * 1e6, 256000 * 1e6, 195 * 1e18));
+        rewardBands.push(RewardBand(256000 * 1e6, 512000 * 1e6, 98 * 1e18));
+        rewardBands.push(RewardBand(512000 * 1e6, 1024000 * 1e6, 49 * 1e18));
+        rewardBands.push(RewardBand(1024000 * 1e6, 2048000 * 1e6, 24 * 1e18));
+        rewardBands.push(RewardBand(2048000 * 1e6, 4096000 * 1e6, 12 * 1e18));
+        rewardBands.push(RewardBand(4096000 * 1e6, 8192000 * 1e6, 6 * 1e18));
+        rewardBands.push(RewardBand(8192000 * 1e6, 16384000 * 1e6, 3 * 1e18));
+        rewardBands.push(RewardBand(16384000 * 1e6, 32768000 * 1e6, 15 * 1e17));
+        rewardBands.push(RewardBand(32768000 * 1e6, 65536000 * 1e6, 75 * 1e16));
+        rewardBands.push(RewardBand(65536000 * 1e6, 131072000 * 1e6, 38 * 1e16));
+        rewardBands.push(RewardBand(131072000 * 1e6, type(uint256).max, 19 * 1e16));
     }
 
-    // ==================== GOVERNANCE ACTION HANDLER ====================
+    // ==================== REWARDS CALCULATION FUNCTIONS ====================
     
-    /**
-     * @dev Increment governance action for a user
-     * Called by bridge when user performs governance actions
-     */
-    function incrementGovernanceAction(address user) external {
-        require(msg.sender == bridge, "Only bridge can call this function");
-        
-        // Update Genesis for backward compatibility
-        genesis.incrementUserGovernanceActions(user);
-        
-        // Delegate to RewardsContract for band-specific tracking
-        if (address(rewardsContract) != address(0)) {
-            rewardsContract.recordGovernanceAction(user);
+    function calculateTokensForRange(uint256 fromAmount, uint256 toAmount) public view returns (uint256) {
+        if (fromAmount >= toAmount) {
+            return 0;
         }
         
-        // Get current band from RewardsContract for event
-        uint256 currentBand = address(rewardsContract) != address(0) ? 
-            rewardsContract.getCurrentBand() : 0;
+        uint256 totalTokens = 0;
+        uint256 currentAmount = fromAmount;
         
-        uint256 newTotal = genesis.getUserTotalGovernanceActions(user);
-        emit GovernanceActionIncremented(user, newTotal, currentBand);
-    }
-
-    // ==================== INTERNAL REWARD PROCESSING ====================
-    
-    /**
-     * @dev Process rewards for a payment by delegating to RewardsContract
-     */
-    function _processRewardsForPayment(address jobGiver, string memory jobId, uint256 amount) internal {
-        if (address(rewardsContract) == address(0)) return;
-        
-        IOpenworkGenesis.Job memory job = genesis.getJob(jobId);
-        address jobTaker = job.selectedApplicant;
-        
-        // Get new platform total after this payment
-        uint256 newPlatformTotal = genesis.totalPlatformPayments();
-        
-        // Delegate reward calculation to RewardsContract
-        uint256[] memory tokensAwarded = rewardsContract.processJobPayment(
-            jobGiver,
-            jobTaker,
-            amount,
-            newPlatformTotal
-        );
-        
-        // Update Genesis with calculated tokens (for backward compatibility)
-        if (tokensAwarded.length > 0 && tokensAwarded[0] > 0) {
-            uint256 currentTokens = genesis.getUserEarnedTokens(jobGiver);
-            genesis.setUserTotalOWTokens(jobGiver, currentTokens + tokensAwarded[0]);
-            emit TokensEarned(jobGiver, tokensAwarded[0], newPlatformTotal, currentTokens + tokensAwarded[0]);
-        }
-        
-        // Handle referrer rewards if any
-        if (tokensAwarded.length > 1 && tokensAwarded[1] > 0) {
-            address jobGiverReferrer = genesis.getUserReferrer(jobGiver);
-            if (jobGiverReferrer != address(0)) {
-                uint256 currentTokens = genesis.getUserEarnedTokens(jobGiverReferrer);
-                genesis.setUserTotalOWTokens(jobGiverReferrer, currentTokens + tokensAwarded[1]);
-                emit TokensEarned(jobGiverReferrer, tokensAwarded[1], newPlatformTotal, currentTokens + tokensAwarded[1]);
+        for (uint256 i = 0; i < rewardBands.length && currentAmount < toAmount; i++) {
+            RewardBand memory band = rewardBands[i];
+            
+            // Skip bands that are entirely below our starting point
+            if (band.maxAmount <= currentAmount) {
+                continue;
+            }
+            
+            // Calculate the overlap with this band
+            uint256 bandStart = currentAmount > band.minAmount ? currentAmount : band.minAmount;
+            uint256 bandEnd = toAmount < band.maxAmount ? toAmount : band.maxAmount;
+            
+            if (bandStart < bandEnd) {
+                uint256 amountInBand = bandEnd - bandStart;
+                uint256 tokensInBand = (amountInBand * band.owPerDollar) / 1e6; // Convert USDT (6 decimals) to tokens
+                totalTokens += tokensInBand;
+                currentAmount = bandEnd;
             }
         }
         
-        if (tokensAwarded.length > 2 && tokensAwarded[2] > 0) {
-            address jobTakerReferrer = genesis.getUserReferrer(jobTaker);
-            if (jobTakerReferrer != address(0)) {
-                uint256 currentTokens = genesis.getUserEarnedTokens(jobTakerReferrer);
-                genesis.setUserTotalOWTokens(jobTakerReferrer, currentTokens + tokensAwarded[2]);
-                emit TokensEarned(jobTakerReferrer, tokensAwarded[2], newPlatformTotal, currentTokens + tokensAwarded[2]);
-            }
-        }
+        return totalTokens;
     }
 
-    // ==================== REWARDS VIEW FUNCTIONS (DELEGATE TO REWARDS CONTRACT) ====================
+    function _accumulateJobTokens(address user, uint256 amountUSDT) private {
+        // Use platform total instead of user cumulative
+        uint256 currentPlatformTotal = genesis.totalPlatformPayments();
+        uint256 newPlatformTotal = currentPlatformTotal + amountUSDT;
+        
+        // Calculate tokens based on platform-wide progression
+        uint256 tokensToAward = calculateTokensForRange(currentPlatformTotal, newPlatformTotal);
+        
+        // Update user's total tokens in genesis
+        (uint256 currentTotalTokens, ) = genesis.getUserRewardInfo(user);
+        genesis.setUserTotalOWTokens(user, currentTotalTokens + tokensToAward);
+        
+        // Emit event with new values
+        emit TokensEarned(user, tokensToAward, newPlatformTotal, currentTotalTokens + tokensToAward);
+    }
+
+    // ==================== PUBLIC REWARDS VIEW FUNCTIONS ====================
     
     function getUserEarnedTokens(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getUserTotalTokensEarned(user);
-        }
         return genesis.getUserEarnedTokens(user);
     }
 
     function getUserRewardInfo(address user) external view returns (
-        uint256 totalTokens,
-        uint256 governanceActions
+    uint256 totalTokens,
+    uint256 governanceActions
     ) {
-        if (address(rewardsContract) != address(0)) {
-            totalTokens = rewardsContract.getUserTotalTokensEarned(user);
-            governanceActions = rewardsContract.getUserTotalGovernanceActions(user);
-        } else {
-            return genesis.getUserRewardInfo(user);
-        }
+    return genesis.getUserRewardInfo(user);
     }
 
     function getUserGovernanceActions(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getUserTotalGovernanceActions(user);
-        }
-        return genesis.getUserTotalGovernanceActions(user);
-    }
-
-    function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getUserGovernanceActionsInBand(user, band);
-        }
-        return genesis.getUserGovernanceActionsInBand(user, band);
+    return genesis.getUserGovernanceActions(user);
     }
 
     function calculateTokensForAmount(address user, uint256 additionalAmount) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            uint256 currentPlatformTotal = genesis.totalPlatformPayments();
-            uint256 newPlatformTotal = currentPlatformTotal + additionalAmount;
-            return rewardsContract.calculateTokensForRange(currentPlatformTotal, newPlatformTotal);
-        }
-        return 0; // Fallback if rewards contract not set
+        // Use platform total instead of user cumulative
+        uint256 currentPlatformTotal = genesis.totalPlatformPayments();
+        uint256 newPlatformTotal = currentPlatformTotal + additionalAmount;
+        return calculateTokensForRange(currentPlatformTotal, newPlatformTotal);
     }
 
-    function getUserTotalClaimableTokens(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getUserTotalClaimableTokens(user);
-        }
-        return 0;
-    }
-
-    function getCurrentBand() external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getCurrentBand();
-        }
-        return 0;
-    }
-
-    function getPlatformBandInfo() external view returns (
-        uint256 currentBand,
-        uint256 currentTotal,
-        uint256 bandMinAmount,
-        uint256 bandMaxAmount,
-        uint256 governanceRewardRate
-    ) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.getPlatformBandInfo();
-        }
-        return (0, genesis.totalPlatformPayments(), 0, 0, 0);
-    }
-
-    // ==================== JOB MANAGEMENT FUNCTIONS ====================
+    // ==================== LOCAL FUNCTIONS (for direct use if needed) ====================
     
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
         require(!genesis.hasProfile(_user), "Profile already exists");
@@ -680,14 +640,49 @@ contract NativeOpenWorkJobContract is
     }
     
     function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external {
-        // Update job total paid in Genesis
         genesis.updateJobTotalPaid(_jobId, _amount);
 
-        // Delegate to RewardsContract for token calculation and distribution
-        _processRewardsForPayment(_jobGiver, _jobId, _amount);
+        // ==================== REWARDS CALCULATION ====================
+        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+        address jobTaker = job.selectedApplicant;
+        
+        // Get referrers from genesis
+        address jobGiverReferrer = genesis.getUserReferrer(_jobGiver);
+        address jobTakerReferrer = genesis.getUserReferrer(jobTaker);
+        
+        // Calculate reward distribution (same logic as before)
+        uint256 jobGiverAmount = _amount;
+        uint256 jobGiverReferrerAmount = 0;
+        uint256 jobTakerReferrerAmount = 0;
+        
+        // Deduct referral bonuses from job giver's amount
+        if (jobGiverReferrer != address(0) && jobGiverReferrer != _jobGiver) {
+            jobGiverReferrerAmount = _amount / 10; // 10% referral bonus
+            jobGiverAmount -= jobGiverReferrerAmount;
+        }
+        
+        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
+            jobTakerReferrerAmount = _amount / 10; // 10% referral bonus
+            jobGiverAmount -= jobTakerReferrerAmount;
+        }
+        
+        // Accumulate earnings for job giver (after deducting referral amounts)
+        if (jobGiverAmount > 0) {
+            _accumulateJobTokens(_jobGiver, jobGiverAmount);
+        }
+        
+        // Accumulate earnings for referrers
+        if (jobGiverReferrerAmount > 0) {
+            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
+        }
+        
+        if (jobTakerReferrerAmount > 0) {
+            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
+        }
+        // ==================== END REWARDS CALCULATION ====================
         
         // Check if job should be completed
-        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+        job = genesis.getJob(_jobId); // Re-fetch updated job
         if (job.currentMilestone == job.finalMilestones.length) {
             genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
             emit JobStatusChanged(_jobId, JobStatus.Completed);
@@ -705,13 +700,48 @@ contract NativeOpenWorkJobContract is
     }
     
     function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external {
-        // Update job total paid in Genesis
         genesis.updateJobTotalPaid(_jobId, _releasedAmount);
 
-        // Delegate to RewardsContract for token calculation and distribution
-        _processRewardsForPayment(_jobGiver, _jobId, _releasedAmount);
-        
+        // ==================== REWARDS CALCULATION ====================
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+        address jobTaker = job.selectedApplicant;
+        
+        // Get referrers from genesis
+        address jobGiverReferrer = genesis.getUserReferrer(_jobGiver);
+        address jobTakerReferrer = genesis.getUserReferrer(jobTaker);
+        
+        // Calculate reward distribution (same logic as before)
+        uint256 jobGiverAmount = _releasedAmount;
+        uint256 jobGiverReferrerAmount = 0;
+        uint256 jobTakerReferrerAmount = 0;
+        
+        // Deduct referral bonuses from job giver's amount
+        if (jobGiverReferrer != address(0) && jobGiverReferrer != _jobGiver) {
+            jobGiverReferrerAmount = _releasedAmount / 10; // 10% referral bonus
+            jobGiverAmount -= jobGiverReferrerAmount;
+        }
+        
+        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
+            jobTakerReferrerAmount = _releasedAmount / 10; // 10% referral bonus
+            jobGiverAmount -= jobTakerReferrerAmount;
+        }
+        
+        // Accumulate earnings for job giver (after deducting referral amounts)
+        if (jobGiverAmount > 0) {
+            _accumulateJobTokens(_jobGiver, jobGiverAmount);
+        }
+        
+        // Accumulate earnings for referrers
+        if (jobGiverReferrerAmount > 0) {
+            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
+        }
+        
+        if (jobTakerReferrerAmount > 0) {
+            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
+        }
+        // ==================== END REWARDS CALCULATION ====================
+        
+        job = genesis.getJob(_jobId); // Re-fetch for current milestone
         genesis.setJobCurrentMilestone(_jobId, job.currentMilestone + 1);
         
         job = genesis.getJob(_jobId); // Re-fetch updated job
@@ -739,62 +769,24 @@ contract NativeOpenWorkJobContract is
         emit UserRated(_jobId, _rater, _userToRate, _rating);
     }
 
-    function addPortfolio(address _user, string memory _portfolioHash) external {
-        genesis.addPortfolio(_user, _portfolioHash);
-        emit PortfolioAdded(_user, _portfolioHash);
-    }
-
-    // ==================== BRIDGE INTEGRATION ====================
+    function incrementGovernanceAction(address user) external {
+    require(msg.sender == bridge, "Only bridge can call this function");
+    genesis.incrementUserGovernanceActions(user);
+    emit GovernanceActionIncremented(user, genesis.getUserGovernanceActions(user));
+    }   
 
     function syncRewardsData(bytes calldata _options) external payable {
         require(bridge != address(0), "Bridge not set");
         
         uint256 totalPlatformPayments = genesis.totalPlatformPayments();
-        uint256 userTotalOWTokens = address(rewardsContract) != address(0) ? 
-            rewardsContract.getUserTotalTokensEarned(msg.sender) : 
-            genesis.getUserEarnedTokens(msg.sender);
-        uint256 userGovernanceActions = address(rewardsContract) != address(0) ? 
-            rewardsContract.getUserTotalGovernanceActions(msg.sender) : 
-            genesis.getUserTotalGovernanceActions(msg.sender);
-        uint256 currentPlatformBand = address(rewardsContract) != address(0) ? 
-            rewardsContract.getCurrentBand() : 0;
+        uint256 userTotalOWTokens = genesis.getUserEarnedTokens(msg.sender);
+        uint256 userGovernanceActions = genesis.getUserGovernanceActions(msg.sender);
         
-        // Get band-specific data if rewards contract available
-        uint256[] memory userBands;
-        uint256[] memory tokensPerBand;
-        uint256[] memory governanceActionsPerBand;
-        uint256[] memory claimablePerBand;
-        
-        if (address(rewardsContract) != address(0)) {
-            (
-                userBands,
-                tokensPerBand,
-                claimablePerBand,
-                ,  // tokensClaimed - not needed
-                governanceActionsPerBand
-            ) = rewardsContract.getUserRewardsBreakdown(msg.sender);
-            
-            // Simple deduplication: only sync if user has bands beyond last synced
-            // Allow one band overlap to avoid missing data within same band
-            uint256 lastSyncedBand = userLastSyncedBand[msg.sender];
-            bool hasNewData = userBands.length > 0 && (lastSyncedBand == 0 || userBands[userBands.length - 1] >= lastSyncedBand);
-            
-            if (hasNewData && userBands.length > 0) {
-                userLastSyncedBand[msg.sender] = userBands[userBands.length - 1];
-                emit RewardsDataSynced(msg.sender, userBands.length, userTotalOWTokens, userBands[userBands.length - 1]);
-            }
-        }
-        
-        // Send to bridge with band data
+        // Send to native bridge
         INativeBridge(bridge).sendSyncRewardsData{value: msg.value}(
             totalPlatformPayments, 
             userTotalOWTokens, 
             userGovernanceActions,
-            currentPlatformBand,
-            userBands,
-            tokensPerBand,
-            governanceActionsPerBand,
-            claimablePerBand,
             _options
         );
     }
@@ -811,6 +803,11 @@ contract NativeOpenWorkJobContract is
         }
         
         return totalRating / ratings.length;
+    }
+    
+    function addPortfolio(address _user, string memory _portfolioHash) external {
+        genesis.addPortfolio(_user, _portfolioHash);
+        emit PortfolioAdded(_user, _portfolioHash);
     }
     
     // ==================== VIEW FUNCTIONS ====================
@@ -845,6 +842,18 @@ contract NativeOpenWorkJobContract is
         return genesis.jobExists(_jobId);
     }
 
+    // ==================== ADDITIONAL REWARDS VIEW FUNCTIONS ====================
+    
+    function getRewardBandsCount() external view returns (uint256) {
+        return rewardBands.length;
+    }
+    
+    function getRewardBand(uint256 index) external view returns (uint256 minAmount, uint256 maxAmount, uint256 owPerDollar) {
+        require(index < rewardBands.length, "Invalid band index");
+        RewardBand memory band = rewardBands[index];
+        return (band.minAmount, band.maxAmount, band.owPerDollar);
+    }
+    
     function getUserReferrer(address user) external view returns (address) {
         return genesis.getUserReferrer(user);
     }
