@@ -108,6 +108,7 @@ contract OpenworkGenesis {
     mapping(address => Profile) public profiles;
     mapping(address => bool) public hasProfile;
     mapping(address => address) public userReferrers;
+    mapping(address => uint256) public userTotalClaimedTokens;
     
     
     // Job data
@@ -457,6 +458,10 @@ contract OpenworkGenesis {
         userGovernanceActions[user]++;
     }
 
+    function updateUserClaimData(address user, uint256 claimedAmount, uint256 totalClaimed) external onlyAuthorized {
+    userTotalClaimedTokens[user] = totalClaimed;
+    }
+
     // ==================== GETTERS ====================
     
     // Profile getters
@@ -549,6 +554,10 @@ contract OpenworkGenesis {
         uint256 governanceActions
     ) {
         return (userTotalOWTokens[user], userGovernanceActions[user]);
+    }
+
+    function getUserTotalClaimedTokens(address user) external view returns (uint256) {
+    return userTotalClaimedTokens[user];
     }
 
     function getUserGovernanceActions(address user) external view returns (uint256) {
