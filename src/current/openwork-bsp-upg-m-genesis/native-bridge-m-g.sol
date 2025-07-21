@@ -43,10 +43,9 @@ interface INativeOpenWorkJobContract {
         bytes calldata _options
     ) external payable;
 
-      function handleUpdateUserClaimData(
+        function handleUpdateUserClaimData(
         address user, 
-        uint256 claimedJobTokens, 
-        uint256 claimedGovernanceTokens
+        uint256 claimedTokens
     ) external;
 }
 
@@ -219,13 +218,13 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).incrementGovernanceAction(user);
         }
 
-        // In _lzReceive() function, add this case:
+       // FIXED CODE:
         else if (keccak256(bytes(functionName)) == keccak256(bytes("updateUserClaimData"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address user, uint256 claimedAmount, uint256 totalClaimed) = abi.decode(_message, (string, address, uint256, uint256));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleUpdateUserClaimData(user, claimedAmount, totalClaimed);
+            (, address user, uint256 claimedAmount) = abi.decode(_message, (string, address, uint256));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleUpdateUserClaimData(user, claimedAmount);
         }
-            
+                    
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
     }
     

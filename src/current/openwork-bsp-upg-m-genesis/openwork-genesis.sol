@@ -458,8 +458,8 @@ contract OpenworkGenesis {
         userGovernanceActions[user]++;
     }
 
-    function updateUserClaimData(address user, uint256 claimedAmount, uint256 totalClaimed) external onlyAuthorized {
-    userTotalClaimedTokens[user] = totalClaimed;
+    function updateUserClaimData(address user, uint256 claimedAmount) external onlyAuthorized {
+        userTotalClaimedTokens[user] += claimedAmount;
     }
 
     // ==================== GETTERS ====================

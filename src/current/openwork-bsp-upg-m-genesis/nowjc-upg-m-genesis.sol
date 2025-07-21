@@ -63,8 +63,7 @@ interface IOpenworkGenesis {
     function incrementUserGovernanceActions(address user) external;
     function incrementUserGovernanceActionsInBand(address user, uint256 band) external;
     function setUserGovernanceActions(address user, uint256 actions) external;
-    function updateUserClaimData(address user, uint256 claimedJobTokens, uint256 claimedGovernanceTokens) external;
-    
+    function updateUserClaimData(address user, uint256 claimedTokens) external;    
     // Getters
     function getProfile(address user) external view returns (Profile memory);
     function getJob(string memory jobId) external view returns (Job memory);
@@ -409,13 +408,12 @@ contract NativeOpenWorkJobContract is
 
     function handleUpdateUserClaimData(
         address user, 
-        uint256 claimedJobTokens, 
-        uint256 claimedGovernanceTokens
+        uint256 claimedTokens
     ) external {
         require(msg.sender == bridge, "Only bridge can call this function");
         
-        genesis.updateUserClaimData(user, claimedJobTokens, claimedGovernanceTokens);
-        emit ClaimDataUpdated(user, claimedJobTokens, claimedGovernanceTokens);
+        genesis.updateUserClaimData(user, claimedTokens);
+        emit ClaimDataUpdated(user, claimedTokens, 0);
     }
 
     // ==================== GOVERNANCE ACTION HANDLER ====================
@@ -527,7 +525,7 @@ contract NativeOpenWorkJobContract is
         return genesis.getUserGovernanceActionsInBand(user, band);
     }
 
-    function calculateTokensForAmount(address user, uint256 additionalAmount) external view returns (uint256) {
+    function calculateTokensForAmount(address /* user */, uint256 additionalAmount) external view returns (uint256) {
         if (address(rewardsContract) != address(0)) {
             uint256 currentPlatformTotal = genesis.totalPlatformPayments();
             uint256 newPlatformTotal = currentPlatformTotal + additionalAmount;

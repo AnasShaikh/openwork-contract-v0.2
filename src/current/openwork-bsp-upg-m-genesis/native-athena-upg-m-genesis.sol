@@ -511,7 +511,7 @@ contract NativeAthena is
     function _voteOnDispute(
         string memory _disputeId, 
         bool _voteFor, 
-        address _claimAddress, 
+        address /* _claimAddress */,
         uint256 voteWeight
     ) internal {
         // Get dispute from genesis
@@ -542,7 +542,7 @@ contract NativeAthena is
     function _voteOnSkillVerification(
         string memory _disputeId, 
         bool _voteFor, 
-        address _claimAddress, 
+        address /* _claimAddress */, 
         uint256 voteWeight
     ) internal {
         uint256 applicationId = stringToUint(_disputeId);
@@ -575,7 +575,7 @@ contract NativeAthena is
     function _voteOnAskAthena(
         string memory _disputeId, 
         bool _voteFor, 
-        address _claimAddress, 
+        address /* _claimAddress */, 
         uint256 voteWeight
     ) internal {
         uint256 athenaId = stringToUint(_disputeId);

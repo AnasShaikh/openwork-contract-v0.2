@@ -314,8 +314,7 @@ function upgradeFromDAO(address newImplementation) external {
         bytes memory payload = abi.encode(
             "updateUserClaimData",
             msg.sender,
-            claimableAmount,
-            claimedGovernanceRewards[msg.sender]
+            claimableAmount
         );
         
         bridge.sendToNativeChain{value: msg.value}(
