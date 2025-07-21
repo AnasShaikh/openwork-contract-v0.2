@@ -122,14 +122,9 @@ interface IOpenWorkRewards {
 
 interface INativeBridge {
     function sendSyncRewardsData(
-        uint256 totalPlatformPayments, 
-        uint256 userTotalOWTokens, 
         uint256 userGovernanceActions,
-        uint256 currentPlatformBand,
         uint256[] calldata userBands,
         uint256[] calldata tokensPerBand,
-        uint256[] calldata governanceActionsPerBand,
-        uint256[] calldata claimablePerBand,
         bytes calldata _options
     ) external payable;
 }
@@ -749,29 +744,21 @@ contract NativeOpenWorkJobContract is
     function syncRewardsData(bytes calldata _options) external payable {
         require(bridge != address(0), "Bridge not set");
         
-        uint256 totalPlatformPayments = genesis.totalPlatformPayments();
-        uint256 userTotalOWTokens = address(rewardsContract) != address(0) ? 
-            rewardsContract.getUserTotalTokensEarned(msg.sender) : 
-            genesis.getUserEarnedTokens(msg.sender);
         uint256 userGovernanceActions = address(rewardsContract) != address(0) ? 
             rewardsContract.getUserTotalGovernanceActions(msg.sender) : 
             genesis.getUserTotalGovernanceActions(msg.sender);
-        uint256 currentPlatformBand = address(rewardsContract) != address(0) ? 
-            rewardsContract.getCurrentBand() : 0;
         
         // Get band-specific data if rewards contract available
         uint256[] memory userBands;
         uint256[] memory tokensPerBand;
-        uint256[] memory governanceActionsPerBand;
-        uint256[] memory claimablePerBand;
         
         if (address(rewardsContract) != address(0)) {
             (
                 userBands,
                 tokensPerBand,
-                claimablePerBand,
+                ,  // tokensClaimable - not needed
                 ,  // tokensClaimed - not needed
-                governanceActionsPerBand
+                   // governanceActionsPerBand - not needed
             ) = rewardsContract.getUserRewardsBreakdown(msg.sender);
             
             // Simple deduplication: only sync if user has bands beyond last synced
@@ -781,20 +768,15 @@ contract NativeOpenWorkJobContract is
             
             if (hasNewData && userBands.length > 0) {
                 userLastSyncedBand[msg.sender] = userBands[userBands.length - 1];
-                emit RewardsDataSynced(msg.sender, userBands.length, userTotalOWTokens, userBands[userBands.length - 1]);
+                emit RewardsDataSynced(msg.sender, userBands.length, tokensPerBand.length > 0 ? tokensPerBand[tokensPerBand.length - 1] : 0, userBands[userBands.length - 1]);
             }
         }
         
-        // Send to bridge with band data
+        // Send to bridge with simplified data
         INativeBridge(bridge).sendSyncRewardsData{value: msg.value}(
-            totalPlatformPayments, 
-            userTotalOWTokens, 
             userGovernanceActions,
-            currentPlatformBand,
             userBands,
             tokensPerBand,
-            governanceActionsPerBand,
-            claimablePerBand,
             _options
         );
     }

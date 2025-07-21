@@ -35,6 +35,13 @@ interface INativeOpenWorkJobContract {
     function handleRate(address rater, string memory jobId, address userToRate, uint256 rating) external;
     function handleAddPortfolio(address user, string memory portfolioHash) external;
     function incrementGovernanceAction(address user) external;
+
+    function sendSyncRewardsData(
+        uint256 userGovernanceActions,
+        uint256[] calldata userBands,
+        uint256[] calldata tokensPerBand,
+        bytes calldata _options
+    ) external payable;
 }
 
 interface IUpgradeable {
@@ -243,17 +250,18 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, athenaClientChainEid, _payload);
     }
 
-    function sendSyncRewardsData(
-    uint256 totalPlatformPayments, 
-    uint256 userTotalOWTokens, 
+function sendSyncRewardsData(
     uint256 userGovernanceActions,
+    uint256[] calldata userBands,
+    uint256[] calldata tokensPerBand,
     bytes calldata _options
 ) external payable onlyAuthorized {
     bytes memory payload = abi.encode(
         "SyncRewards",
-        totalPlatformPayments,
-        userTotalOWTokens,
-        userGovernanceActions
+        msg.sender,  // Add user address as first parameter
+        userGovernanceActions,
+        userBands,
+        tokensPerBand
     );
     
     _lzSend(
@@ -265,120 +273,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     );
     
     emit CrossChainMessageSent("SyncRewards", mainChainEid, payload);
-    }
-    
-    function sendToLowjcChain(
-        string memory _functionName,
-        bytes memory _payload,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        _lzSend(
-            lowjcChainEid,
-            _payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent(_functionName, lowjcChainEid, _payload);
-    }
-    
-    function sendToSpecificChain(
-        string memory _functionName,
-        uint32 _dstEid,
-        bytes memory _payload,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        _lzSend(
-            _dstEid,
-            _payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent(_functionName, _dstEid, _payload);
-    }
-    
-    function sendToThreeChains(
-        string memory _functionName,
-        uint32 _dstEid1,
-        uint32 _dstEid2,
-        uint32 _dstEid3,
-        bytes memory _payload1,
-        bytes memory _payload2,
-        bytes memory _payload3,
-        bytes calldata _options1,
-        bytes calldata _options2,
-        bytes calldata _options3
-    ) external payable onlyAuthorized {
-        // Calculate total fees upfront
-        MessagingFee memory fee1 = _quote(_dstEid1, _payload1, _options1, false);
-        MessagingFee memory fee2 = _quote(_dstEid2, _payload2, _options2, false);
-        MessagingFee memory fee3 = _quote(_dstEid3, _payload3, _options3, false);
-        uint256 totalFee = fee1.nativeFee + fee2.nativeFee + fee3.nativeFee;
-        
-        require(msg.value >= totalFee, "Insufficient fee provided");
-        
-        // Send to all three chains
-        _lzSend(_dstEid1, _payload1, _options1, fee1, payable(msg.sender));
-        _lzSend(_dstEid2, _payload2, _options2, fee2, payable(msg.sender));
-        _lzSend(_dstEid3, _payload3, _options3, fee3, payable(msg.sender));
-        
-        emit CrossChainMessageSent(_functionName, _dstEid1, _payload1);
-        emit CrossChainMessageSent(_functionName, _dstEid2, _payload2);
-        emit CrossChainMessageSent(_functionName, _dstEid3, _payload3);
-    }
-    
-    // ==================== QUOTE FUNCTIONS ====================
-    
-    function quoteRewardsChain(
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(rewardsChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
-    function quoteAthenaClientChain(
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(athenaClientChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
-    function quoteLowjcChain(
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(lowjcChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
-    function quoteSpecificChain(
-        uint32 _dstEid,
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(_dstEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-
-    function quoteSyncRewardsData(
-    uint256 totalPlatformPayments, 
-    uint256 userTotalOWTokens, 
-    uint256 userGovernanceActions,
-    bytes calldata _options
-) external view returns (uint256 fee) {
-    bytes memory payload = abi.encode(
-        "SyncRewards",
-        totalPlatformPayments,
-        userTotalOWTokens,
-        userGovernanceActions
-    );
-    MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
-    return msgFee.nativeFee;
 }
     
     function quoteThreeChains(
@@ -401,6 +295,24 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         fee3 = msgFee3.nativeFee;
         totalFee = fee1 + fee2 + fee3;
     }
+
+    function quoteSyncRewardsData(
+    address user,
+    uint256 userGovernanceActions,
+    uint256[] calldata userBands,
+    uint256[] calldata tokensPerBand,
+    bytes calldata _options
+) external view returns (uint256 fee) {
+    bytes memory payload = abi.encode(
+        "SyncRewards",
+        user,
+        userGovernanceActions,
+        userBands,
+        tokensPerBand
+    );
+    MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
+    return msgFee.nativeFee;
+}
     
     // ==================== ADMIN FUNCTIONS ====================
     

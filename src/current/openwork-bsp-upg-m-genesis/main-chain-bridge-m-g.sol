@@ -22,7 +22,14 @@ interface IRewardsContract {
     function handleUpdateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount, uint32 sourceChain) external;
     function handleGovernanceActionNotification(address account, uint32 sourceChain) external;
     function handleStakeDataUpdate(address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive, uint32 sourceChain) external;
-    function handleSyncRewards(uint256 totalPlatformPayments, uint256 userTotalOWTokens, uint256 userGovernanceActions, uint32 sourceChain) external; // ADD THIS
+    function handleSyncRewards(uint256 totalPlatformPayments, uint256 userTotalOWTokens, uint256 userGovernanceActions, uint32 sourceChain) external; 
+       function handleSyncRewards(
+        address user,
+        uint256 userGovernanceActions, 
+        uint256[] calldata userBands,
+        uint256[] calldata tokensPerBand,
+        uint32 sourceChain
+    ) external;
 }
 
 contract ThirdChainBridge is OAppSender, OAppReceiver {
@@ -152,8 +159,8 @@ function sendUpgradeCommand(
         }
         else if (keccak256(bytes(functionName)) == keccak256(bytes("SyncRewards"))) {
             require(rewardsContract != address(0), "Rewards contract not set");
-            (, uint256 totalPlatformPayments, uint256 userTotalOWTokens, uint256 userGovernanceActions) = abi.decode(_message, (string, uint256, uint256, uint256));
-            IRewardsContract(rewardsContract).handleSyncRewards(totalPlatformPayments, userTotalOWTokens, userGovernanceActions, _origin.srcEid);
+            (, address user, uint256 userGovernanceActions, uint256[] memory userBands, uint256[] memory tokensPerBand) = abi.decode(_message, (string, address, uint256, uint256[], uint256[]));
+            IRewardsContract(rewardsContract).handleSyncRewards(user, userGovernanceActions, userBands, tokensPerBand, _origin.srcEid);
         }
         
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);
