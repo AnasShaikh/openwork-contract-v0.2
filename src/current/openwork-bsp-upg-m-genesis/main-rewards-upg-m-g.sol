@@ -290,7 +290,7 @@ function upgradeFromDAO(address newImplementation) external {
         return totalEligible - alreadyClaimed;
     }
     
-    function claimRewards() external nonReentrant {
+    function claimRewards(bytes calldata _options) external payable nonReentrant {
         // Check if user has synced data
         uint256[] memory userBands = userSyncedBands[msg.sender];
         uint256 totalGovernanceActions = userSyncedGovernanceActions[msg.sender];
@@ -309,6 +309,21 @@ function upgradeFromDAO(address newImplementation) external {
         
         // Transfer tokens to user
         require(openworkToken.transfer(msg.sender, claimableAmount), "Token transfer failed");
+
+            if (address(bridge) != address(0)) {
+        bytes memory payload = abi.encode(
+            "updateUserClaimData",
+            msg.sender,
+            claimableAmount,
+            claimedGovernanceRewards[msg.sender]
+        );
+        
+        bridge.sendToNativeChain{value: msg.value}(
+            "updateUserClaimData", 
+            payload, 
+            _options
+        );
+    }
         
         emit GovernanceRewardsClaimed(msg.sender, claimableAmount);
     }
@@ -430,6 +445,23 @@ function upgradeFromDAO(address newImplementation) external {
             authorized[i] = authorizedChains[commonChains[i]];
             names[i] = chainNames[commonChains[i]];
         }
+    }
+
+        function quoteClaimSync(
+        address user,
+        uint256 claimAmount,
+        uint256 totalClaimed,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        if (address(bridge) == address(0)) return 0;
+        
+        bytes memory payload = abi.encode(
+            "updateUserClaimData",
+            user,
+            claimAmount,
+            totalClaimed
+        );
+        return bridge.quoteNativeChain(payload, _options);
     }
     
     function isChainAuthorized(uint32 chainEid) external view returns (bool) {
