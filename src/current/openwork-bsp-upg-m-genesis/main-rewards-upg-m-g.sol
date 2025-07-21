@@ -47,13 +47,6 @@ contract CrossChainRewardsContract is
     // User referrer mapping
     mapping(address => address) public userReferrers;
     
-    // Reward bands structure for job-based rewards
-    struct RewardBand {
-        uint256 minAmount;      // Minimum cumulative amount for this band
-        uint256 maxAmount;      // Maximum cumulative amount for this band
-        uint256 owPerDollar;    // OW tokens per USDT (scaled by 1e18)
-    }
-    
     // Governance reward bands structure
     struct GovernanceRewardBand {
         uint256 minValue;       // Minimum USD value for this band
@@ -61,19 +54,18 @@ contract CrossChainRewardsContract is
         uint256 rewardPerAction; // OW tokens per governance action (scaled by 1e18)
     }
     
-    // User tracking for job-based rewards
-    mapping(address => uint256) public userCumulativeEarnings;
-    mapping(address => uint256) public userTotalOWTokens;
+    // Band-specific user data from sync
+    mapping(address => uint256[]) public userSyncedBands;
+    mapping(address => uint256[]) public userSyncedTokensPerBand;
+    mapping(address => uint256) public userSyncedGovernanceActions;
     
     // Governance rewards tracking
     mapping(address => uint256) public claimedGovernanceRewards;
-    mapping(address => uint256) public governanceActionCount;
     
     // Job tracking
     uint256 public currentTotalPlatformPayments;
     
-    // Reward bands arrays
-    RewardBand[] public rewardBands;
+    // Governance reward bands array
     GovernanceRewardBand[] public governanceRewardBands;
     
     // Cross-chain tracking
@@ -82,29 +74,13 @@ contract CrossChainRewardsContract is
     
     // Events
     event ProfileCreated(address indexed user, address indexed referrer, uint32 indexed sourceChain);
-    event PaymentProcessed(
-        address indexed jobGiver, 
-        address indexed jobTaker,
-        uint256 amount,
-        uint256 newPlatformTotal
-    );
-    
-    event TokensEarned(
-        address indexed user, 
-        uint256 tokensEarned, 
-        uint256 newCumulativeEarnings,
-        uint256 newTotalTokens
-    );
-    
     event GovernanceRewardsClaimed(address indexed user, uint256 amount);
-    event GovernanceActionNotified(address indexed user, uint256 newActionCount);
-    event CrossChainGovernanceActionReceived(address indexed user, uint32 indexed sourceChain, uint256 newActionCount);
     event PlatformTotalUpdated(uint256 newTotal);
     event ContractUpdated(string contractType, address newAddress);
     event AuthorizedChainUpdated(uint32 indexed chainEid, bool authorized, string chainName);
     event StakeDataForwarded(address indexed staker, bool isActive);
     event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
-    event RewardsSynced(uint256 totalPlatformPayments, uint256 userTotalOWTokens, uint256 userGovernanceActions, uint32 indexed sourceChain);
+    event RewardsSynced(address indexed user, uint256 userGovernanceActions, uint256[] userBands, uint256[] tokensPerBand, uint32 indexed sourceChain);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -118,7 +94,6 @@ contract CrossChainRewardsContract is
         
         openworkToken = IERC20(_openworkToken);
         bridge = IThirdChainBridge(_bridge);
-        _initializeRewardBands();
         _initializeGovernanceRewardBands();
         _initializeAuthorizedChains();
     }
@@ -136,16 +111,6 @@ function upgradeFromDAO(address newImplementation) external {
     function handleCreateProfile(address user, address referrer, uint32 sourceChain) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
         _createProfile(user, referrer, sourceChain);
-    }
-    
-    function handleUpdateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount, uint32 /* sourceChain */) external {
-        require(msg.sender == address(bridge), "Only bridge can call this function");
-        _updateRewardsOnPayment(jobGiver, jobTaker, amount);
-    }
-    
-    function handleGovernanceActionNotification(address account, uint32 sourceChain) external {
-        require(msg.sender == address(bridge), "Only bridge can call this function");
-        _notifyGovernanceActionCrossChain(account, sourceChain);
     }
     
     function handleStakeDataUpdate(address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive, uint32 /* sourceChain */) external {
@@ -201,48 +166,24 @@ function upgradeFromDAO(address newImplementation) external {
     }
 
     function handleSyncRewards(
-    uint256 totalPlatformPayments, 
-    uint256 userTotalOWTokens, 
-    uint256 userGovernanceActions, 
-    uint32 sourceChain
+        address user,
+        uint256 userGovernanceActions, 
+        uint256[] calldata userBands,
+        uint256[] calldata tokensPerBand,
+        uint32 sourceChain
     ) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
+        require(userBands.length == tokensPerBand.length, "Array length mismatch");
         
-        // Update platform total if it's higher
-        if (totalPlatformPayments > currentTotalPlatformPayments) {
-            currentTotalPlatformPayments = totalPlatformPayments;
-            emit PlatformTotalUpdated(totalPlatformPayments);
-        }
+        // Update user's synced data
+        userSyncedGovernanceActions[user] = userGovernanceActions;
+        userSyncedBands[user] = userBands;
+        userSyncedTokensPerBand[user] = tokensPerBand;
         
-        // Log the sync data received
-        emit RewardsSynced(totalPlatformPayments, userTotalOWTokens, userGovernanceActions, sourceChain);
+        emit RewardsSynced(user, userGovernanceActions, userBands, tokensPerBand, sourceChain);
     }
     
-    // ==================== REWARD BANDS INITIALIZATION ====================
-    
-    function _initializeRewardBands() private {
-        // Job-based reward bands
-        rewardBands.push(RewardBand(0, 500 * 1e6, 100000 * 1e18));
-        rewardBands.push(RewardBand(500 * 1e6, 1000 * 1e6, 50000 * 1e18));
-        rewardBands.push(RewardBand(1000 * 1e6, 2000 * 1e6, 25000 * 1e18));
-        rewardBands.push(RewardBand(2000 * 1e6, 4000 * 1e6, 12500 * 1e18));
-        rewardBands.push(RewardBand(4000 * 1e6, 8000 * 1e6, 6250 * 1e18));
-        rewardBands.push(RewardBand(8000 * 1e6, 16000 * 1e6, 3125 * 1e18));
-        rewardBands.push(RewardBand(16000 * 1e6, 32000 * 1e6, 1562 * 1e18));
-        rewardBands.push(RewardBand(32000 * 1e6, 64000 * 1e6, 781 * 1e18));
-        rewardBands.push(RewardBand(64000 * 1e6, 128000 * 1e6, 391 * 1e18));
-        rewardBands.push(RewardBand(128000 * 1e6, 256000 * 1e6, 195 * 1e18));
-        rewardBands.push(RewardBand(256000 * 1e6, 512000 * 1e6, 98 * 1e18));
-        rewardBands.push(RewardBand(512000 * 1e6, 1024000 * 1e6, 49 * 1e18));
-        rewardBands.push(RewardBand(1024000 * 1e6, 2048000 * 1e6, 24 * 1e18));
-        rewardBands.push(RewardBand(2048000 * 1e6, 4096000 * 1e6, 12 * 1e18));
-        rewardBands.push(RewardBand(4096000 * 1e6, 8192000 * 1e6, 6 * 1e18));
-        rewardBands.push(RewardBand(8192000 * 1e6, 16384000 * 1e6, 3 * 1e18));
-        rewardBands.push(RewardBand(16384000 * 1e6, 32768000 * 1e6, 15 * 1e17));
-        rewardBands.push(RewardBand(32768000 * 1e6, 65536000 * 1e6, 75 * 1e16));
-        rewardBands.push(RewardBand(65536000 * 1e6, 131072000 * 1e6, 38 * 1e16));
-        rewardBands.push(RewardBand(131072000 * 1e6, type(uint256).max, 19 * 1e16));
-    }
+    // ==================== GOVERNANCE REWARD BANDS INITIALIZATION ====================
     
     function _initializeGovernanceRewardBands() private {
         // Governance action reward bands
@@ -280,107 +221,7 @@ function upgradeFromDAO(address newImplementation) external {
         emit ProfileCreated(user, referrer, sourceChain);
     }
     
-    function _updateRewardsOnPayment(address jobGiver, address jobTaker, uint256 amount) internal {
-        require(jobGiver != address(0) && jobTaker != address(0), "Invalid addresses");
-        require(amount > 0, "Amount must be greater than 0");
-        
-        // Update platform total by adding this payment
-        currentTotalPlatformPayments += amount;
-        emit PlatformTotalUpdated(currentTotalPlatformPayments);
-        
-        // Get referrers from internal mapping
-        address jobGiverReferrer = userReferrers[jobGiver];
-        address jobTakerReferrer = userReferrers[jobTaker];
-        
-        // Calculate reward distribution
-        uint256 jobGiverAmount = amount;
-        uint256 jobGiverReferrerAmount = 0;
-        uint256 jobTakerReferrerAmount = 0;
-        
-        // Deduct referral bonuses from job giver's amount
-        if (jobGiverReferrer != address(0) && jobGiverReferrer != jobGiver) {
-            jobGiverReferrerAmount = amount / 10; // 10% referral bonus
-            jobGiverAmount -= jobGiverReferrerAmount;
-        }
-        
-        if (jobTakerReferrer != address(0) && jobTakerReferrer != jobTaker && jobTakerReferrer != jobGiverReferrer) {
-            jobTakerReferrerAmount = amount / 10; // 10% referral bonus
-            jobGiverAmount -= jobTakerReferrerAmount;
-        }
-        
-        // Accumulate earnings for job giver (after deducting referral amounts)
-        if (jobGiverAmount > 0) {
-            _accumulateJobTokens(jobGiver, jobGiverAmount);
-        }
-        
-        // Accumulate earnings for referrers
-        if (jobGiverReferrerAmount > 0) {
-            _accumulateJobTokens(jobGiverReferrer, jobGiverReferrerAmount);
-        }
-        
-        if (jobTakerReferrerAmount > 0) {
-            _accumulateJobTokens(jobTakerReferrer, jobTakerReferrerAmount);
-        }
-        
-        emit PaymentProcessed(jobGiver, jobTaker, amount, currentTotalPlatformPayments);
-    }
-    
-    function _accumulateJobTokens(address user, uint256 amountUSDT) private {
-        uint256 currentCumulative = userCumulativeEarnings[user];
-        uint256 newCumulative = currentCumulative + amountUSDT;
-        
-        // Calculate tokens based on progressive bands
-        uint256 tokensToAward = calculateTokensForRange(currentCumulative, newCumulative);
-        
-        // Update user's cumulative earnings and total tokens
-        userCumulativeEarnings[user] = newCumulative;
-        userTotalOWTokens[user] += tokensToAward;
-        
-        emit TokensEarned(user, tokensToAward, newCumulative, userTotalOWTokens[user]);
-    }
-    
-    function calculateTokensForRange(uint256 fromAmount, uint256 toAmount) public view returns (uint256) {
-        if (fromAmount >= toAmount) {
-            return 0;
-        }
-        
-        uint256 totalTokens = 0;
-        uint256 currentAmount = fromAmount;
-        
-        for (uint256 i = 0; i < rewardBands.length && currentAmount < toAmount; i++) {
-            RewardBand memory band = rewardBands[i];
-            
-            // Skip bands that are entirely below our starting point
-            if (band.maxAmount <= currentAmount) {
-                continue;
-            }
-            
-            // Calculate the overlap with this band
-            uint256 bandStart = currentAmount > band.minAmount ? currentAmount : band.minAmount;
-            uint256 bandEnd = toAmount < band.maxAmount ? toAmount : band.maxAmount;
-            
-            if (bandStart < bandEnd) {
-                uint256 amountInBand = bandEnd - bandStart;
-                uint256 tokensInBand = (amountInBand * band.owPerDollar) / 1e6; // Convert USDT (6 decimals) to tokens
-                totalTokens += tokensInBand;
-                currentAmount = bandEnd;
-            }
-        }
-        
-        return totalTokens;
-    }
-    
     // ==================== GOVERNANCE REWARDS FUNCTIONS ====================
-    
-    function notifyGovernanceAction(address account) external {
-        governanceActionCount[account]++;
-        emit GovernanceActionNotified(account, governanceActionCount[account]);
-    }
-    
-    function _notifyGovernanceActionCrossChain(address account, uint32 sourceChain) internal {
-        governanceActionCount[account]++;
-        emit CrossChainGovernanceActionReceived(account, sourceChain, governanceActionCount[account]);
-    }
     
     function getCurrentGovernanceRewardPerAction() public view returns (uint256) {
         for (uint256 i = 0; i < governanceRewardBands.length; i++) {
@@ -399,26 +240,46 @@ function upgradeFromDAO(address newImplementation) external {
     }
     
     function calculateTotalEligibleRewards(address user) public view returns (uint256) {
-        uint256 actions = governanceActionCount[user];
-        if (actions == 0) return 0;
+        // Use synced band-specific data
+        uint256[] memory userBands = userSyncedBands[user];
+        uint256[] memory tokensPerBand = userSyncedTokensPerBand[user];
+        uint256 totalGovernanceActions = userSyncedGovernanceActions[user];
         
-        // Get total accumulated earnings from job-based rewards
-        uint256 totalJobEarnings = userCumulativeEarnings[user];
+        require(userBands.length == tokensPerBand.length, "Band data mismatch");
         
-        // Calculate reward per action based on current platform total
-        uint256 rewardPerAction = getCurrentGovernanceRewardPerAction();
+        if (totalGovernanceActions == 0 || userBands.length == 0) return 0;
         
-        // Total rewards = governance actions × reward per action
-        // But user can only claim proportional to their job earnings
-        uint256 maxPossibleRewards = actions * rewardPerAction;
+        uint256 totalClaimableTokens = 0;
+        uint256 remainingActions = totalGovernanceActions;
         
-        // User can claim rewards proportional to their contribution to platform
-        if (currentTotalPlatformPayments == 0) return 0;
+        // For each band, calculate how many tokens can be claimed
+        for (uint256 i = 0; i < userBands.length; i++) {
+            uint256 bandIndex = userBands[i];
+            uint256 tokensInBand = tokensPerBand[i];
+            
+            if (bandIndex >= governanceRewardBands.length) continue;
+            
+            // Get reward rate for this band
+            uint256 rewardRate = governanceRewardBands[bandIndex].rewardPerAction;
+            
+            // Calculate governance actions needed to unlock all tokens in this band
+            uint256 actionsNeededForBand = tokensInBand / rewardRate;
+            
+            // User can claim proportionally based on their governance actions
+            if (remainingActions >= actionsNeededForBand) {
+                // Can claim all tokens from this band
+                totalClaimableTokens += tokensInBand;
+                remainingActions -= actionsNeededForBand;
+            } else {
+                // Can claim partial tokens from this band
+                uint256 partialTokens = (remainingActions * tokensInBand) / actionsNeededForBand;
+                totalClaimableTokens += partialTokens;
+                remainingActions = 0; // Used up all governance actions
+                break;
+            }
+        }
         
-        uint256 userProportion = (totalJobEarnings * 1e18) / currentTotalPlatformPayments;
-        uint256 eligibleRewards = (maxPossibleRewards * userProportion) / 1e18;
-        
-        return eligibleRewards;
+        return totalClaimableTokens;
     }
     
     function getClaimableRewards(address user) public view returns (uint256) {
@@ -430,8 +291,12 @@ function upgradeFromDAO(address newImplementation) external {
     }
     
     function claimRewards() external nonReentrant {
-        require(governanceActionCount[msg.sender] > 0, "No governance actions performed");
-        require(userCumulativeEarnings[msg.sender] > 0, "No earnings to base rewards on");
+        // Check if user has synced data
+        uint256[] memory userBands = userSyncedBands[msg.sender];
+        uint256 totalGovernanceActions = userSyncedGovernanceActions[msg.sender];
+        
+        require(totalGovernanceActions > 0, "No governance actions performed");
+        require(userBands.length > 0, "No job tokens earned");
         
         uint256 claimableAmount = getClaimableRewards(msg.sender);
         require(claimableAmount > 0, "No rewards to claim");
@@ -496,13 +361,6 @@ function upgradeFromDAO(address newImplementation) external {
     
     // ==================== VIEW FUNCTIONS ====================
     
-    function getUserJobRewardInfo(address user) external view returns (
-        uint256 cumulativeEarnings,
-        uint256 totalJobTokens
-    ) {
-        return (userCumulativeEarnings[user], userTotalOWTokens[user]);
-    }
-    
     function getUserGovernanceRewardInfo(address user) external view returns (
         uint256 totalGovernanceActions,
         uint256 totalEligibleRewards,
@@ -510,29 +368,21 @@ function upgradeFromDAO(address newImplementation) external {
         uint256 claimableAmount,
         uint256 currentRewardPerAction
     ) {
-        totalGovernanceActions = governanceActionCount[user];
+        totalGovernanceActions = userSyncedGovernanceActions[user];
         totalEligibleRewards = calculateTotalEligibleRewards(user);
         claimedAmount = claimedGovernanceRewards[user];
         claimableAmount = getClaimableRewards(user);
         currentRewardPerAction = getCurrentGovernanceRewardPerAction();
     }
     
-    function getUserAllRewardInfo(address user) external view returns (
-        uint256 cumulativeJobEarnings,
-        uint256 totalJobTokens,
-        uint256 totalGovernanceActions,
-        uint256 totalEligibleRewards,
-        uint256 claimedGovernanceRewards_,
-        uint256 claimableGovernanceRewards,
-        uint256 currentRewardPerAction
+    function getUserSyncedData(address user) external view returns (
+        uint256 syncedGovernanceActions,
+        uint256[] memory syncedBands,
+        uint256[] memory syncedTokensPerBand
     ) {
-        cumulativeJobEarnings = userCumulativeEarnings[user];
-        totalJobTokens = userTotalOWTokens[user];
-        totalGovernanceActions = governanceActionCount[user];
-        totalEligibleRewards = calculateTotalEligibleRewards(user);
-        claimedGovernanceRewards_ = claimedGovernanceRewards[user];
-        claimableGovernanceRewards = getClaimableRewards(user);
-        currentRewardPerAction = getCurrentGovernanceRewardPerAction();
+        syncedGovernanceActions = userSyncedGovernanceActions[user];
+        syncedBands = userSyncedBands[user];
+        syncedTokensPerBand = userSyncedTokensPerBand[user];
     }
     
     function getUserReferrer(address user) external view returns (address) {
@@ -541,16 +391,6 @@ function upgradeFromDAO(address newImplementation) external {
     
     function getCurrentTotalPlatformPayments() external view returns (uint256) {
         return currentTotalPlatformPayments;
-    }
-    
-    function getRewardBandsCount() external view returns (uint256) {
-        return rewardBands.length;
-    }
-    
-    function getRewardBand(uint256 index) external view returns (uint256 minAmount, uint256 maxAmount, uint256 owPerDollar) {
-        require(index < rewardBands.length, "Invalid band index");
-        RewardBand memory band = rewardBands[index];
-        return (band.minAmount, band.maxAmount, band.owPerDollar);
     }
     
     function getGovernanceRewardBandsCount() external view returns (uint256) {
@@ -571,13 +411,6 @@ function upgradeFromDAO(address newImplementation) external {
             }
         }
         return governanceRewardBands.length > 0 ? governanceRewardBands.length - 1 : 0;
-    }
-    
-    // Calculate job tokens for a specific amount without updating state
-    function calculateJobTokensForAmount(address user, uint256 additionalAmount) external view returns (uint256) {
-        uint256 currentCumulative = userCumulativeEarnings[user];
-        uint256 newCumulative = currentCumulative + additionalAmount;
-        return calculateTokensForRange(currentCumulative, newCumulative);
     }
     
     // Cross-chain info functions
@@ -615,21 +448,15 @@ function upgradeFromDAO(address newImplementation) external {
         emit PlatformTotalUpdated(newTotal);
     }
     
-    function emergencyUpdateUserJobRewards(address user, uint256 newCumulativeEarnings, uint256 newTotalTokens) external onlyOwner {
-        userCumulativeEarnings[user] = newCumulativeEarnings;
-        userTotalOWTokens[user] = newTotalTokens;
-    }
-    
-    function emergencyUpdateUserGovernanceRewards(address user, uint256 newActionCount, uint256 newClaimedAmount) external onlyOwner {
-        governanceActionCount[user] = newActionCount;
+    function emergencyUpdateUserGovernanceRewards(address user, uint256 newClaimedAmount) external onlyOwner {
         claimedGovernanceRewards[user] = newClaimedAmount;
     }
     
-        // Emergency token withdrawal
-        function emergencyWithdraw(uint256 amount) external onlyOwner {
-            require(openworkToken.transfer(owner(), amount), "Token transfer failed");
-        }
-
-        // Allow contract to receive ETH for paying LayerZero fees
-        receive() external payable {}
+    // Emergency token withdrawal
+    function emergencyWithdraw(uint256 amount) external onlyOwner {
+        require(openworkToken.transfer(owner(), amount), "Token transfer failed");
     }
+
+    // Allow contract to receive ETH for paying LayerZero fees
+    receive() external payable {}
+}
