@@ -16,13 +16,6 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-interface IRewardsContract {
-    function getUserJobRewardInfo(address user) external view returns (
-        uint256 cumulativeEarnings,
-        uint256 totalJobTokens
-    );
-}
-
 interface IThirdChainBridge {
     function sendToNativeChain(
         string memory _functionName,
@@ -35,18 +28,17 @@ interface IThirdChainBridge {
         bytes calldata _options
     ) external view returns (uint256 fee);
 
-  function sendUpgradeCommand(
-    uint32 targetChainId,
-    address targetProxy, 
-    address newImplementation,
-    bytes calldata _options
-) external payable;
+    function sendUpgradeCommand(
+        uint32 targetChainId,
+        address targetProxy, 
+        address newImplementation,
+        bytes calldata _options
+    ) external payable;
 }
 
 interface IUpgradeable {
     function upgradeFromDAO(address newImplementation) external;
 }
-
 
 contract MainDAO is 
     Initializable,
@@ -58,19 +50,17 @@ contract MainDAO is
     UUPSUpgradeable
 {
     IERC20 public openworkToken;
-    IRewardsContract public rewardsContract;
     IThirdChainBridge public bridge;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     uint32 public chainId;
     
-    // Governance parameters (updatable)
-    uint256 public proposalStakeThreshold;
-    uint256 public votingStakeThreshold;
+    // Governance parameters (updatable) - for Tally compatibility
+    uint256 public proposalThresholdAmount;
+    uint256 public votingThresholdAmount;
     uint256 public unstakeDelay;
     
-    // Reward-based governance thresholds
-    uint256 public proposalRewardThreshold;
-    uint256 public votingRewardThreshold;
+    // Synced user reward data from NOWJC
+    mapping(address => uint256) public userTotalRewards;
     
     struct Stake {
         uint256 amount;
@@ -78,13 +68,6 @@ contract MainDAO is
         uint256 durationMinutes;
     }
 
-    struct Earner {
-        address earnerAddress;
-        uint256 balance;
-        uint256 cumulativeEarnings;
-    }
-
-    mapping(address => Earner) public earners;
     mapping(address => Stake) public stakes;
     mapping(address => uint256) public unstakeRequestTime;
     mapping(address => address) public delegates;
@@ -100,15 +83,13 @@ contract MainDAO is
     event StakeRemoved(address indexed staker, uint256 amount);
     event UnstakeRequested(address indexed staker, uint256 requestTime, uint256 availableTime);
     event UnstakeCompleted(address indexed staker, uint256 amount);
-    event EarnerUpdated(address indexed earner, uint256 newBalance, uint256 governanceActionsDeprecated, uint256 cumulativeEarnings);
     event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
-    event RewardsContractUpdated(address indexed newRewardsContract);
     event BridgeUpdated(address indexed newBridge);
-    event RewardThresholdUpdated(string thresholdType, uint256 newThreshold);
+    event ThresholdUpdated(string thresholdType, uint256 newThreshold);
     event StakeDataSentCrossChain(address indexed staker, bool isActive, uint256 fee);
-    event StakeDataReceivedFromRewards(address indexed staker, uint256 amount, bool isActive);
     event GovernanceActionSentToBridge(address indexed user, string action, uint256 fee);
     event CrossContractCallFailed(address indexed account, string reason);
+    event UserRewardsSynced(address indexed user, uint256 totalRewards, uint32 sourceChain);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -125,7 +106,7 @@ contract MainDAO is
         __GovernorSettings_init(
             1 minutes,
             5 minutes,
-            100 * 10**18
+            100 * 10**18  // This is the base proposalThreshold for Governor
         );
         __GovernorCountingSimple_init();
         __Ownable_init(_owner);
@@ -137,50 +118,22 @@ contract MainDAO is
         bridge = IThirdChainBridge(_bridge);
         
         // Initialize governance parameters
-        proposalStakeThreshold = 100 * 10**18;
-        votingStakeThreshold = 50 * 10**18;
+        proposalThresholdAmount = 100 * 10**18;
+        votingThresholdAmount = 50 * 10**18;
         unstakeDelay = 24 hours;
-        proposalRewardThreshold = 100 * 10**18;
-        votingRewardThreshold = 100 * 10**18;
     }
     
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
     
     // ==================== MESSAGE HANDLERS ====================
     
-    function handleUpdateStakeDataFromRewards(
-        address staker,
-        uint256 amount,
-        uint256 unlockTime,
-        uint256 durationMinutes,
-        bool isActive
-    ) external {
+    function handleSyncVotingPower(address user, uint256 totalRewards, uint32 sourceChain) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
-        
-        stakes[staker] = Stake({
-            amount: amount,
-            unlockTime: unlockTime,
-            durationMinutes: durationMinutes
-        });
-        
-        // Update staker tracking
-        if (isActive && !isStaker[staker]) {
-            allStakers.push(staker);
-            isStaker[staker] = true;
-        } else if (!isActive && isStaker[staker]) {
-            isStaker[staker] = false;
-        }
-        
-        emit StakeDataReceivedFromRewards(staker, amount, isActive);
+        userTotalRewards[user] = totalRewards;
+        emit UserRewardsSynced(user, totalRewards, sourceChain);
     }
     
     // ==================== ADMIN FUNCTIONS ====================
-    
-    function setRewardsContract(address _rewardsContract) external onlyOwner {
-        require(_rewardsContract != address(0), "Invalid rewards contract address");
-        rewardsContract = IRewardsContract(_rewardsContract);
-        emit RewardsContractUpdated(_rewardsContract);
-    }
     
     function setBridge(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Invalid bridge address");
@@ -259,23 +212,12 @@ contract MainDAO is
         }
     }
     
-    // ==================== GOVERNANCE ELIGIBILITY ====================
+    // ==================== GOVERNANCE POWER CALCULATION ====================
     
-    function _hasGovernanceEligibility(address account, uint256 stakeThreshold, uint256 rewardThreshold) internal view returns (bool) {
-        // Check stake eligibility
-        if (stakes[account].amount >= stakeThreshold) {
-            return true;
-        }
-        
-        // Check reward eligibility
-        if (address(rewardsContract) != address(0)) {
-            (, uint256 totalJobTokens) = rewardsContract.getUserJobRewardInfo(account);
-            if (totalJobTokens >= rewardThreshold) {
-                return true;
-            }
-        }
-        
-        return false;
+    function getCombinedGovernancePower(address account) public view returns (uint256) {
+        uint256 stakePower = stakes[account].amount;
+        uint256 rewardPower = userTotalRewards[account];
+        return stakePower + rewardPower;
     }
 
     // ==================== STAKING FUNCTIONS ====================
@@ -401,16 +343,6 @@ contract MainDAO is
         return (userStake.amount, userStake.unlockTime, userStake.durationMinutes, userStake.amount > 0);
     }
     
-    function getEarner(address earnerAddress) external view returns (address, uint256, uint256) {
-        Earner memory earner = earners[earnerAddress];
-        return (earner.earnerAddress, earner.balance, earner.cumulativeEarnings);
-    }
-    
-    function getEarnerLegacy(address earnerAddress) external view returns (address, uint256, uint256) {
-        Earner memory earner = earners[earnerAddress];
-        return (earner.earnerAddress, earner.balance, 0); // governance actions now tracked in rewards contract
-    }
-    
     function getUnstakeAvailableTime(address staker) external view returns (uint256) {
         if (unstakeRequestTime[staker] == 0) return 0;
         return unstakeRequestTime[staker] + unstakeDelay;
@@ -420,30 +352,26 @@ contract MainDAO is
         Stake memory userStake = stakes[account];
         own = userStake.amount > 0 ? userStake.amount * userStake.durationMinutes : 0;
         delegated = delegatedVotingPower[account];
-        
-        // Add reward-based voting power
-        reward = 0;
-        if (address(rewardsContract) != address(0)) {
-            (, uint256 totalJobTokens) = rewardsContract.getUserJobRewardInfo(account);
-            reward = totalJobTokens;
-        }
-        
+        reward = userTotalRewards[account];
         total = own + delegated + reward;
     }
     
-    function getGovernanceEligibility(address account) external view returns (bool canPropose, bool canVote, uint256 stakeAmount, uint256 rewardTokens) {
+    function getGovernanceEligibility(address account) external view returns (bool canPropose, bool canVote, uint256 stakeAmount, uint256 rewardTokens, uint256 combinedPower, uint256 votingPower) {
         stakeAmount = stakes[account].amount;
+        rewardTokens = userTotalRewards[account];
+        combinedPower = getCombinedGovernancePower(account);
+        votingPower = _getVotes(account, 0, "");
         
-        if (address(rewardsContract) != address(0)) {
-            (, rewardTokens) = rewardsContract.getUserJobRewardInfo(account);
-        }
-        
-        canPropose = _hasGovernanceEligibility(account, proposalStakeThreshold, proposalRewardThreshold);
-        canVote = _hasGovernanceEligibility(account, votingStakeThreshold, votingRewardThreshold);
+        canPropose = combinedPower >= proposalThresholdAmount;
+        canVote = combinedPower >= votingThresholdAmount;
     }
     
-    // ==================== GOVERNANCE FUNCTIONS ====================
+    // ==================== GOVERNOR OVERRIDES FOR TALLY COMPATIBILITY ====================
     
+    /**
+     * @dev Override _getVotes to include cross-chain reward data in voting power
+     * This ensures Tally sees the complete voting power including rewards
+     */
     function _getVotes(address account, uint256, bytes memory) internal view override returns (uint256) {
         Stake memory userStake = stakes[account];
         uint256 ownPower = 0;
@@ -451,30 +379,29 @@ contract MainDAO is
             ownPower = userStake.amount * userStake.durationMinutes;
         }
         
-        // Add reward-based voting power
-        uint256 rewardPower = 0;
-        if (address(rewardsContract) != address(0)) {
-            (, uint256 totalJobTokens) = rewardsContract.getUserJobRewardInfo(account);
-            rewardPower = totalJobTokens; // 1:1 mapping of reward tokens to voting power
-        }
+        // Add reward-based voting power using synced data
+        uint256 rewardPower = userTotalRewards[account];
         
         uint256 totalPower = ownPower + delegatedVotingPower[account] + rewardPower;
         return totalPower;
     }
     
-    function hasVoted(uint256 proposalId, address account) public view override(IGovernor, GovernorCountingSimpleUpgradeable) returns (bool) {
-        return super.hasVoted(proposalId, account);
+    /**
+     * @dev Override proposalThreshold for Tally compatibility
+     * Returns our custom threshold that considers stake + rewards
+     */
+    function proposalThreshold() public view override(GovernorUpgradeable, GovernorSettingsUpgradeable) returns (uint256) {
+        return proposalThresholdAmount;
     }
     
-    // REVISED: _castVote now includes cross-chain NOWJC call instead of local rewards call
+    /**
+     * @dev Override _castVote to add cross-chain governance notification
+     * But let Governor handle eligibility checks using our _getVotes() function
+     */
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason, bytes memory params)
         internal override returns (uint256) {
-        require(
-            _hasGovernanceEligibility(account, votingStakeThreshold, votingRewardThreshold),
-            "Insufficient stake or reward tokens to vote"
-        );
         
-        // REVISED: Send governance notification to NOWJC via Bridge instead of local rewards call
+        // Send governance notification to NOWJC via Bridge if msg.value provided
         if (msg.value > 0) {
             _sendGovernanceNotificationViaBridge(account, "vote", "");
         }
@@ -482,7 +409,10 @@ contract MainDAO is
         return super._castVote(proposalId, account, support, reason, params);
     }
     
-    // REVISED: propose now includes cross-chain NOWJC call instead of local rewards call and accepts options
+    /**
+     * @dev Override propose to add cross-chain governance notification  
+     * But let Governor handle eligibility checks using our proposalThreshold()
+     */
     function propose(
         address[] memory targets, 
         uint256[] memory values, 
@@ -490,12 +420,8 @@ contract MainDAO is
         string memory description,
         bytes calldata _options
     ) external payable returns (uint256) {
-        require(
-            _hasGovernanceEligibility(msg.sender, proposalStakeThreshold, proposalRewardThreshold),
-            "Insufficient stake or reward tokens to propose"
-        );
         
-        // REVISED: Send governance notification to NOWJC via Bridge instead of local rewards call
+        // Send governance notification to NOWJC via Bridge
         _sendGovernanceNotificationViaBridge(msg.sender, "propose", _options);
         
         uint256 proposalId = GovernorUpgradeable.propose(targets, values, calldatas, description);
@@ -503,21 +429,23 @@ contract MainDAO is
         return proposalId;
     }
     
-    // REVISED: castVote now accepts options and includes cross-chain NOWJC call
+    /**
+     * @dev Additional castVote function with options for cross-chain calls
+     */
     function castVote(
         uint256 proposalId, 
         uint8 support,
         bytes calldata _options
     ) external payable returns (uint256) {
-        require(
-            _hasGovernanceEligibility(msg.sender, votingStakeThreshold, votingRewardThreshold),
-            "Insufficient stake or reward tokens to vote"
-        );
         
-        // REVISED: Send governance notification to NOWJC via Bridge instead of local rewards call
+        // Send governance notification to NOWJC via Bridge
         _sendGovernanceNotificationViaBridge(msg.sender, "vote", _options);
         
         return _castVote(proposalId, msg.sender, support, "", "");
+    }
+    
+    function hasVoted(uint256 proposalId, address account) public view override(IGovernor, GovernorCountingSimpleUpgradeable) returns (bool) {
+        return super.hasVoted(proposalId, account);
     }
     
     function quorum(uint256) public pure override returns (uint256) {
@@ -530,10 +458,6 @@ contract MainDAO is
     
     function votingPeriod() public view override(GovernorUpgradeable, GovernorSettingsUpgradeable) returns (uint256) {
         return super.votingPeriod();
-    }
-    
-    function proposalThreshold() public view override(GovernorUpgradeable, GovernorSettingsUpgradeable) returns (uint256) {
-        return super.proposalThreshold();
     }
     
     function getActiveProposalIds() external view returns (uint256[] memory activeIds, ProposalState[] memory states) {
@@ -606,24 +530,14 @@ contract MainDAO is
     
     // ==================== GOVERNANCE ADMIN FUNCTIONS ====================
     
-    function updateProposalStakeThreshold(uint256 newThreshold) external onlyGovernance {
-        proposalStakeThreshold = newThreshold;
-        emit RewardThresholdUpdated("proposalStake", newThreshold);
+    function updateProposalThreshold(uint256 newThreshold) external onlyGovernance {
+        proposalThresholdAmount = newThreshold;
+        emit ThresholdUpdated("proposalThreshold", newThreshold);
     }
     
-    function updateVotingStakeThreshold(uint256 newThreshold) external onlyGovernance {
-        votingStakeThreshold = newThreshold;
-        emit RewardThresholdUpdated("votingStake", newThreshold);
-    }
-    
-    function updateProposalRewardThreshold(uint256 newThreshold) external onlyGovernance {
-        proposalRewardThreshold = newThreshold;
-        emit RewardThresholdUpdated("proposalReward", newThreshold);
-    }
-    
-    function updateVotingRewardThreshold(uint256 newThreshold) external onlyGovernance {
-        votingRewardThreshold = newThreshold;
-        emit RewardThresholdUpdated("votingReward", newThreshold);
+    function updateVotingThreshold(uint256 newThreshold) external onlyGovernance {
+        votingThresholdAmount = newThreshold;
+        emit ThresholdUpdated("votingThreshold", newThreshold);
     }
     
     function updateUnstakeDelay(uint256 newDelay) external onlyGovernance {
@@ -638,24 +552,23 @@ contract MainDAO is
         payable(owner()).transfer(balance);
     }
 
-function upgradeContract(
-    uint32 targetChainId,
-    address targetProxy,
-    address newImplementation,
-    bytes calldata _options
-) external payable onlyOwner {
-    if (targetChainId == chainId) {
-        IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
-    } else {
-        bridge.sendUpgradeCommand{value: msg.value}(
-            targetChainId,
-            targetProxy,
-            newImplementation,
-            _options
-        );
+    function upgradeContract(
+        uint32 targetChainId,
+        address targetProxy,
+        address newImplementation,
+        bytes calldata _options
+    ) external payable onlyOwner {
+        if (targetChainId == chainId) {
+            IUpgradeable(targetProxy).upgradeFromDAO(newImplementation);
+        } else {
+            bridge.sendUpgradeCommand{value: msg.value}(
+                targetChainId,
+                targetProxy,
+                newImplementation,
+                _options
+            );
+        }
     }
-}
-
     
     function emergencyWithdrawTokens(uint256 amount) external onlyOwner {
         require(openworkToken.transfer(owner(), amount), "Token transfer failed");

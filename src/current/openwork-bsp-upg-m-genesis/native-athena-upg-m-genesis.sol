@@ -8,7 +8,6 @@ import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/O
 // Interface to get staker info from Native DAO (now local)
 interface INativeDAO {
     function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive);
-    function notifyGovernanceActionFromAthena(address account) external;
 }
 
 // Interface to get earned tokens and job details from Native OpenWork Job Contract
