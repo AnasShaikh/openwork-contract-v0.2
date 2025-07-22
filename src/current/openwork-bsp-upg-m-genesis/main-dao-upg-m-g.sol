@@ -17,7 +17,6 @@ interface IERC20 {
 }
 
 interface IRewardsContract {
-    function notifyGovernanceAction(address account) external;
     function getUserJobRewardInfo(address user) external view returns (
         uint256 cumulativeEarnings,
         uint256 totalJobTokens
