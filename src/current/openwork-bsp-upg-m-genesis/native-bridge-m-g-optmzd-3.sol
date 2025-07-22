@@ -43,7 +43,7 @@ interface INativeOpenWorkJobContract {
         bytes calldata _options
     ) external payable;
 
-        function handleUpdateUserClaimData(
+    function handleUpdateUserClaimData(
         address user, 
         uint256 claimedTokens
     ) external;
@@ -69,11 +69,12 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     address public nativeAthenaContract;
     address public nativeOpenWorkJobContract;
     
-    // Chain endpoints - this bridge handles multiple destination chains
-    uint32 public rewardsChainEid;     // Chain where RewardsContract is deployed
-    uint32 public athenaClientChainEid; // Chain where AthenaClient is deployed
-    uint32 public lowjcChainEid;       // Chain where LOWJC is deployed
-    uint32 public mainChainEid;        // Chain where Main DAO is deployed
+    // NEW: Multiple Local Chains Support
+    mapping(uint32 => bool) public authorizedLocalChains;
+    uint32[] public localChainEids;
+    
+    // Chain endpoints - simplified to 2 types
+    uint32 public mainChainEid;        // Main/Rewards chain (single)
     
     // Events
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
@@ -82,6 +83,8 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     event ChainEndpointUpdated(string indexed chainType, uint32 newEid);
     event ContractAddressSet(string indexed contractType, address contractAddress);
     event UpgradeExecuted(address indexed targetProxy, address indexed newImplementation, uint32 indexed sourceChain);
+    event LocalChainAdded(uint32 indexed localChainEid);
+    event LocalChainRemoved(uint32 indexed localChainEid);
     
     modifier onlyAuthorized() {
         require(authorizedContracts[msg.sender], "Not authorized to use bridge");
@@ -96,14 +99,8 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     constructor(
         address _endpoint,
         address _owner,
-        uint32 _rewardsChainEid,
-        uint32 _athenaClientChainEid,
-        uint32 _lowjcChainEid,
         uint32 _mainChainEid
     ) OAppCore(_endpoint, _owner) Ownable(_owner) {
-        rewardsChainEid = _rewardsChainEid;
-        athenaClientChainEid = _athenaClientChainEid;
-        lowjcChainEid = _lowjcChainEid;
         mainChainEid = _mainChainEid;
     }
     
@@ -116,6 +113,60 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
         if (msg.value < _nativeFee) revert("Insufficient native fee");
         return _nativeFee;
+    }
+    
+    // ==================== LOCAL CHAIN MANAGEMENT ====================
+    
+    function addLocalChain(uint32 _localChainEid) external onlyOwner {
+        require(!authorizedLocalChains[_localChainEid], "Local chain already authorized");
+        authorizedLocalChains[_localChainEid] = true;
+        localChainEids.push(_localChainEid);
+        emit LocalChainAdded(_localChainEid);
+    }
+    
+    function removeLocalChain(uint32 _localChainEid) external onlyOwner {
+        require(authorizedLocalChains[_localChainEid], "Local chain not authorized");
+        authorizedLocalChains[_localChainEid] = false;
+        
+        // Remove from array
+        for (uint256 i = 0; i < localChainEids.length; i++) {
+            if (localChainEids[i] == _localChainEid) {
+                localChainEids[i] = localChainEids[localChainEids.length - 1];
+                localChainEids.pop();
+                break;
+            }
+        }
+        emit LocalChainRemoved(_localChainEid);
+    }
+    
+    function getLocalChains() external view returns (uint32[] memory) {
+        return localChainEids;
+    }
+    
+    // ==================== JOB ID PARSING UTILITY ====================
+    
+    function extractEidFromJobId(string memory jobId) internal pure returns (uint32) {
+        bytes memory jobIdBytes = bytes(jobId);
+        uint256 dashIndex = 0;
+        
+        // Find the dash position
+        for (uint256 i = 0; i < jobIdBytes.length; i++) {
+            if (jobIdBytes[i] == '-') {
+                dashIndex = i;
+                break;
+            }
+        }
+        
+        require(dashIndex > 0, "Invalid job ID format");
+        
+        // Extract EID part (before dash)
+        uint32 eid = 0;
+        for (uint256 i = 0; i < dashIndex; i++) {
+            require(jobIdBytes[i] >= '0' && jobIdBytes[i] <= '9', "Invalid EID in job ID");
+            eid = eid * 10 + uint32(uint8(jobIdBytes[i]) - 48);
+        }
+        
+        return eid;
     }
     
     // ==================== UPGRADE FUNCTIONALITY ====================
@@ -175,55 +226,53 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         }
         
         // ==================== NATIVE OPENWORK JOB CONTRACT MESSAGES ====================
-    else if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).createProfile(user, ipfsHash, referrer);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).applyToJob(applicant, jobId, applicationHash, descriptions, amounts);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).submitWork(applicant, jobId, submissionHash);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePayment(jobGiver, jobId, amount);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).lockNextMilestone(caller, jobId, lockedAmount);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).rate(rater, jobId, userToRate, rating);
-    } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
-        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-        (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
-        INativeOpenWorkJobContract(nativeOpenWorkJobContract).addPortfolio(user, portfolioHash);
-    }
-        // ==================== NEW: GOVERNANCE ACTION HANDLING ====================
+        else if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).createProfile(user, ipfsHash, referrer);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).applyToJob(applicant, jobId, applicationHash, descriptions, amounts);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).submitWork(applicant, jobId, submissionHash);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePayment(jobGiver, jobId, amount);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).lockNextMilestone(caller, jobId, lockedAmount);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).rate(rater, jobId, userToRate, rating);
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
+            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+            (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).addPortfolio(user, portfolioHash);
+        }
+        // ==================== GOVERNANCE ACTION HANDLING ====================
         else if (keccak256(bytes(functionName)) == keccak256(bytes("incrementGovernanceAction"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address user) = abi.decode(_message, (string, address));
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).incrementGovernanceAction(user);
         }
-
-       // FIXED CODE:
         else if (keccak256(bytes(functionName)) == keccak256(bytes("updateUserClaimData"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address user, uint256 claimedAmount) = abi.decode(_message, (string, address, uint256));
@@ -235,36 +284,40 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     
     // ==================== BRIDGE FUNCTIONS ====================
     
-    function sendToRewardsChain(
+    function sendToMainChain(
         string memory _functionName,
         bytes memory _payload,
         bytes calldata _options
     ) external payable onlyAuthorized {
         _lzSend(
-            rewardsChainEid,
+            mainChainEid,
             _payload,
             _options,
             MessagingFee(msg.value, 0),
             payable(msg.sender)
         );
         
-        emit CrossChainMessageSent(_functionName, rewardsChainEid, _payload);
+        emit CrossChainMessageSent(_functionName, mainChainEid, _payload);
     }
     
-    function sendToAthenaClientChain(
+    function sendToLocalChain(
+        string memory _disputeId,
         string memory _functionName,
         bytes memory _payload,
         bytes calldata _options
     ) external payable onlyAuthorized {
+        uint32 targetEid = extractEidFromJobId(_disputeId);
+        require(authorizedLocalChains[targetEid], "Local chain not authorized");
+        
         _lzSend(
-            athenaClientChainEid,
+            targetEid,
             _payload,
             _options,
             MessagingFee(msg.value, 0),
-             payable(msg.sender)
+            payable(msg.sender)
         );
         
-        emit CrossChainMessageSent(_functionName, athenaClientChainEid, _payload);
+        emit CrossChainMessageSent(_functionName, targetEid, _payload);
     }
 
     function sendSyncRewardsData(
@@ -310,6 +363,8 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         
         emit CrossChainMessageSent("syncVotingPower", mainChainEid, payload);
     }
+    
+    // ==================== QUOTE FUNCTIONS ====================
 
     function quoteSyncVotingPower(
         address user,
@@ -322,6 +377,40 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
             totalRewards
         );
         MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
+        return msgFee.nativeFee;
+    }
+
+    function quoteSyncRewardsData(
+        address user,
+        uint256 claimableAmount,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        bytes memory payload = abi.encode(
+            "syncClaimableRewards",
+            user,
+            claimableAmount
+        );
+        MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
+        return msgFee.nativeFee;
+    }
+
+    function quoteLocalChain(
+        string memory _disputeId,
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        uint32 targetEid = extractEidFromJobId(_disputeId);
+        require(authorizedLocalChains[targetEid], "Local chain not authorized");
+        
+        MessagingFee memory msgFee = _quote(targetEid, _payload, _options, false);
+        return msgFee.nativeFee;
+    }
+
+    function quoteMainChain(
+        bytes calldata _payload,
+        bytes calldata _options
+    ) external view returns (uint256 fee) {
+        MessagingFee memory msgFee = _quote(mainChainEid, _payload, _options, false);
         return msgFee.nativeFee;
     }
         
@@ -344,20 +433,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         fee2 = msgFee2.nativeFee;
         fee3 = msgFee3.nativeFee;
         totalFee = fee1 + fee2 + fee3;
-    }
-
-    function quoteSyncRewardsData(
-    address user,
-    uint256 claimableAmount,
-    bytes calldata _options
-    ) external view returns (uint256 fee) {
-        bytes memory payload = abi.encode(
-            "syncClaimableRewards",
-            user,
-            claimableAmount
-        );
-        MessagingFee memory msgFee = _quote(mainChainEid, payload, _options, false);
-        return msgFee.nativeFee;
     }
     
     // ==================== ADMIN FUNCTIONS ====================
@@ -382,34 +457,8 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         emit ContractAddressSet("nativeOpenWorkJob", _nativeOpenWorkJob);
     }
     
-    function updateRewardsChainEid(uint32 _rewardsChainEid) external onlyOwner {
-        rewardsChainEid = _rewardsChainEid;
-        emit ChainEndpointUpdated("rewards", _rewardsChainEid);
-    }
-    
-    function updateAthenaClientChainEid(uint32 _athenaClientChainEid) external onlyOwner {
-        athenaClientChainEid = _athenaClientChainEid;
-        emit ChainEndpointUpdated("athenaClient", _athenaClientChainEid);
-    }
-    
-    function updateLowjcChainEid(uint32 _lowjcChainEid) external onlyOwner {
-        lowjcChainEid = _lowjcChainEid;
-        emit ChainEndpointUpdated("lowjc", _lowjcChainEid);
-    }
-    
     function updateMainChainEid(uint32 _mainChainEid) external onlyOwner {
         mainChainEid = _mainChainEid;
-        emit ChainEndpointUpdated("main", _mainChainEid);
-    }
-    
-    function updateChainEndpoints(uint32 _rewardsChainEid, uint32 _athenaClientChainEid, uint32 _lowjcChainEid, uint32 _mainChainEid) external onlyOwner {
-        rewardsChainEid = _rewardsChainEid;
-        athenaClientChainEid = _athenaClientChainEid;
-        lowjcChainEid = _lowjcChainEid;
-        mainChainEid = _mainChainEid;
-        emit ChainEndpointUpdated("rewards", _rewardsChainEid);
-        emit ChainEndpointUpdated("athenaClient", _athenaClientChainEid);
-        emit ChainEndpointUpdated("lowjc", _lowjcChainEid);
         emit ChainEndpointUpdated("main", _mainChainEid);
     }
     
