@@ -224,10 +224,22 @@ contract NativeAthena is
         uint256 fees;
     }
 
+    struct VoterData {
+    address voter;
+    address claimAddress;
+    uint256 votingPower;
+    bool voteFor;
+    }
+
+
     uint256 public minOracleMembers;
     uint256 public votingPeriodMinutes;
     uint256 public minStakeRequired;
-    
+    mapping(string => mapping(address => address)) public disputeVoterClaimAddresses;
+    mapping(string => VoterData[]) public disputeVoters;
+    mapping(uint256 => VoterData[]) public skillVerificationVoters;
+    mapping(uint256 => VoterData[]) public askAthenaVoters;
+        
     // Events
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
     event BridgeUpdated(address indexed oldBridge, address indexed newBridge);
@@ -421,219 +433,268 @@ contract NativeAthena is
         }
     }
     
-    function addMembers(address[] memory _members, string memory _oracleName) external onlyDAO {
-        // Check oracle exists in genesis
-        IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
-        require(bytes(oracle.name).length > 0, "Oracle not found");
+    function addSingleOracle(
+    string memory _name,
+    address[] memory _members,
+    string memory _shortDescription,
+    string memory _hashOfDetails,
+    address[] memory _skillVerifiedAddresses
+    ) external onlyDAO {
+        require(bytes(_name).length > 0, "Oracle name cannot be empty");
+        require(_members.length >= minOracleMembers, "Not enough members for oracle");
         
+        // Verify all members meet voting requirements
         for (uint256 i = 0; i < _members.length; i++) {
             require(canVote(_members[i]), "Member does not meet minimum stake/earned tokens requirement");
-            genesis.addOracleMember(_oracleName, _members[i]);
         }
+        
+        genesis.setOracle(_name, _members, _shortDescription, _hashOfDetails, _skillVerifiedAddresses);
     }
 
-    function getOracleMembers(string memory _oracleName) external view returns (address[] memory) {
-        IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
-        require(bytes(oracle.name).length > 0, "Oracle not found");
-        return genesis.getOracleMembers(_oracleName);
-    }
-    
-    function removeMemberFromOracle(string memory _oracleName, address _memberToRemove) external onlyDAO {
-        IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
-        require(bytes(oracle.name).length > 0, "Oracle not found");
-        
-        genesis.removeOracleMember(_oracleName, _memberToRemove);
-    }
 
-    function removeOracle(string[] memory _oracleNames) external onlyDAO {
-        for (uint256 i = 0; i < _oracleNames.length; i++) {
-            // Note: Genesis contract doesn't have removeOracle function, 
-            // but we can set empty oracle to effectively remove it
-            address[] memory emptyMembers = new address[](0);
-            address[] memory emptySkillVerified = new address[](0);
-            genesis.setOracle(_oracleNames[i], emptyMembers, "", "", emptySkillVerified);
+        function addMembers(address[] memory _members, string memory _oracleName) external onlyDAO {
+            // Check oracle exists in genesis
+            IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
+            require(bytes(oracle.name).length > 0, "Oracle not found");
+            
+            for (uint256 i = 0; i < _members.length; i++) {
+                require(canVote(_members[i]), "Member does not meet minimum stake/earned tokens requirement");
+                genesis.addOracleMember(_oracleName, _members[i]);
+            }
         }
-    }
-    
-    // ==================== SKILL VERIFICATION ====================
-    
-    function approveSkillVerification(uint256 _applicationId) external onlyDAO {
-        // Get application from genesis
-        IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(_applicationId);
-        require(application.applicant != address(0), "Invalid application ID");
+
+        function getOracleMembers(string memory _oracleName) external view returns (address[] memory) {
+            IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
+            require(bytes(oracle.name).length > 0, "Oracle not found");
+            return genesis.getOracleMembers(_oracleName);
+        }
         
-        // Check oracle exists in genesis
-        IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(application.targetOracleName);
-        require(bytes(oracle.name).length > 0, "Oracle not found");
+        function removeMemberFromOracle(string memory _oracleName, address _memberToRemove) external onlyDAO {
+            IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(_oracleName);
+            require(bytes(oracle.name).length > 0, "Oracle not found");
+            
+            genesis.removeOracleMember(_oracleName, _memberToRemove);
+        }
+
+        function removeOracle(string[] memory _oracleNames) external onlyDAO {
+            for (uint256 i = 0; i < _oracleNames.length; i++) {
+                // Note: Genesis contract doesn't have removeOracle function, 
+                // but we can set empty oracle to effectively remove it
+                address[] memory emptyMembers = new address[](0);
+                address[] memory emptySkillVerified = new address[](0);
+                genesis.setOracle(_oracleNames[i], emptyMembers, "", "", emptySkillVerified);
+            }
+        }
         
-        genesis.addSkillVerifiedAddress(application.targetOracleName, application.applicant);
-    }
-    
-    // ==================== REVISED VOTING FUNCTIONS - LOCAL CALLS ONLY ====================
-    
-    function vote(
+        // ==================== SKILL VERIFICATION ====================
+        
+        function approveSkillVerification(uint256 _applicationId) external onlyDAO {
+            // Get application from genesis
+            IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(_applicationId);
+            require(application.applicant != address(0), "Invalid application ID");
+            
+            // Check oracle exists in genesis
+            IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(application.targetOracleName);
+            require(bytes(oracle.name).length > 0, "Oracle not found");
+            
+            genesis.addSkillVerifiedAddress(application.targetOracleName, application.applicant);
+        }
+        
+        // ==================== REVISED VOTING FUNCTIONS - LOCAL CALLS ONLY ====================
+        
+        function vote(
         VotingType _votingType, 
         string memory _disputeId, 
         bool _voteFor, 
         address _claimAddress
-    ) external {
-        // Check if user can vote (has sufficient stake OR earned tokens)
-        require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
-        require(_claimAddress != address(0), "Claim address cannot be zero");
-        
-        // Calculate total vote weight (stake weight + earned tokens)
-        uint256 voteWeight = getUserVotingPower(msg.sender);
-        require(voteWeight > 0, "No voting power");
-        
-        // Emit event if user is using earned tokens (no active stake above threshold)
-        (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(msg.sender);
-        if (!isActive || stakeAmount < minStakeRequired) {
-            if (address(nowjContract) != address(0)) {
-                uint256 earnedTokens = nowjContract.getUserEarnedTokens(msg.sender);
-                if (earnedTokens >= minStakeRequired) {
-                    string memory votingTypeStrShort = _votingType == VotingType.Dispute ? "dispute" : 
-                                                      _votingType == VotingType.SkillVerification ? "skill_verification" : "ask_athena";
-                    emit EarnedTokensUsedForVoting(msg.sender, earnedTokens, votingTypeStrShort);
-                }
+        ) external {
+            require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
+            require(_claimAddress != address(0), "Claim address cannot be zero");
+            
+            uint256 voteWeight = getUserVotingPower(msg.sender);
+            require(voteWeight > 0, "No voting power");
+            
+            // STORE VOTER DATA ONCE - before routing
+            VoterData memory voterData = VoterData({
+                voter: msg.sender,
+                claimAddress: _claimAddress,
+                votingPower: voteWeight,
+                voteFor: _voteFor
+            });
+            
+            // Store in appropriate mapping
+            if (_votingType == VotingType.Dispute) {
+                disputeVoters[_disputeId].push(voterData);
+            } else if (_votingType == VotingType.SkillVerification) {
+                uint256 applicationId = stringToUint(_disputeId);
+                skillVerificationVoters[applicationId].push(voterData);
+            } else if (_votingType == VotingType.AskAthena) {
+                uint256 athenaId = stringToUint(_disputeId);
+                askAthenaVoters[athenaId].push(voterData);
+            }
+            
+            // Route to individual functions (existing logic)
+            if (_votingType == VotingType.Dispute) {
+                _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight);
+            } else if (_votingType == VotingType.SkillVerification) {
+                _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight);
+            } else if (_votingType == VotingType.AskAthena) {
+                _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight);
             }
         }
         
-        // Route to appropriate voting function - no cross-chain calls needed
-        if (_votingType == VotingType.Dispute) {
-            _voteOnDispute(_disputeId, _voteFor, _claimAddress, voteWeight);
-        } else if (_votingType == VotingType.SkillVerification) {
-            _voteOnSkillVerification(_disputeId, _voteFor, _claimAddress, voteWeight);
-        } else if (_votingType == VotingType.AskAthena) {
-            _voteOnAskAthena(_disputeId, _voteFor, _claimAddress, voteWeight);
-        }
-    }
-    
-    function _voteOnDispute(
+        function _voteOnDispute(
         string memory _disputeId, 
         bool _voteFor, 
-        address /* _claimAddress */,
+        address _claimAddress,
         uint256 voteWeight
-    ) internal {
-        // Get dispute from genesis
-        IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-        require(dispute.timeStamp > 0, "Dispute does not exist");
-        require(!genesis.hasUserVotedOnDispute(_disputeId, msg.sender), "Already voted on this dispute");
-        require(dispute.isVotingActive, "Voting is not active for this dispute");
-        require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        // Record vote in genesis
-        genesis.setDisputeVote(_disputeId, msg.sender);
-        
-        // Update vote counts in genesis
-        if (_voteFor) {
-            genesis.updateDisputeVotes(_disputeId, dispute.votesFor + voteWeight, dispute.votesAgainst);
-        } else {
-            genesis.updateDisputeVotes(_disputeId, dispute.votesFor, dispute.votesAgainst + voteWeight);
+        ) internal {
+            IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
+            require(dispute.timeStamp > 0, "Dispute does not exist");
+            require(!genesis.hasUserVotedOnDispute(_disputeId, msg.sender), "Already voted on this dispute");
+            require(dispute.isVotingActive, "Voting is not active for this dispute");
+            require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            genesis.setDisputeVote(_disputeId, msg.sender);
+            
+            if (_voteFor) {
+                genesis.updateDisputeVotes(_disputeId, dispute.votesFor + voteWeight, dispute.votesAgainst);
+            } else {
+                genesis.updateDisputeVotes(_disputeId, dispute.votesFor, dispute.votesAgainst + voteWeight);
+            }
+            
+            if (address(nowjContract) != address(0)) {
+                nowjContract.incrementGovernanceAction(msg.sender);
+            }
         }
         
-        // REVISED: Call local NOWJC contract instead of bridge to rewards
-        if (address(nowjContract) != address(0)) {
-            nowjContract.incrementGovernanceAction(msg.sender);
+        function _voteOnSkillVerification(
+            string memory _disputeId, 
+            bool _voteFor, 
+            address /* _claimAddress */, 
+            uint256 voteWeight
+        ) internal {
+            uint256 applicationId = stringToUint(_disputeId);
+            
+            // Get application from genesis
+            IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(applicationId);
+            require(application.applicant != address(0), "Application does not exist");
+            require(!genesis.hasUserVotedOnSkillApplication(applicationId, msg.sender), "Already voted on this application");
+            require(application.isVotingActive, "Voting is not active for this application");
+            require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            // Record vote in genesis
+            genesis.setSkillApplicationVote(applicationId, msg.sender);
+            
+            // Update vote counts in genesis
+            if (_voteFor) {
+                genesis.updateSkillApplicationVotes(applicationId, application.votesFor + voteWeight, application.votesAgainst);
+            } else {
+                genesis.updateSkillApplicationVotes(applicationId, application.votesFor, application.votesAgainst + voteWeight);
+            }
+            
+            // REVISED: Call local NOWJC contract instead of bridge to rewards
+            if (address(nowjContract) != address(0)) {
+                nowjContract.incrementGovernanceAction(msg.sender);
+            }
+            
+            // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
         }
         
-        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
-    }
-    
-    function _voteOnSkillVerification(
-        string memory _disputeId, 
-        bool _voteFor, 
-        address /* _claimAddress */, 
-        uint256 voteWeight
-    ) internal {
-        uint256 applicationId = stringToUint(_disputeId);
-        
-        // Get application from genesis
-        IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(applicationId);
-        require(application.applicant != address(0), "Application does not exist");
-        require(!genesis.hasUserVotedOnSkillApplication(applicationId, msg.sender), "Already voted on this application");
-        require(application.isVotingActive, "Voting is not active for this application");
-        require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        // Record vote in genesis
-        genesis.setSkillApplicationVote(applicationId, msg.sender);
-        
-        // Update vote counts in genesis
-        if (_voteFor) {
-            genesis.updateSkillApplicationVotes(applicationId, application.votesFor + voteWeight, application.votesAgainst);
-        } else {
-            genesis.updateSkillApplicationVotes(applicationId, application.votesFor, application.votesAgainst + voteWeight);
+        function _voteOnAskAthena(
+            string memory _disputeId, 
+            bool _voteFor, 
+            address /* _claimAddress */, 
+            uint256 voteWeight
+        ) internal {
+            uint256 athenaId = stringToUint(_disputeId);
+            
+            // Get askAthena application from genesis
+            IOpenworkGenesis.AskAthenaApplication memory athenaApp = genesis.getAskAthenaApplication(athenaId);
+            require(athenaApp.applicant != address(0), "AskAthena application does not exist");
+            require(!genesis.hasUserVotedOnAskAthena(athenaId, msg.sender), "Already voted on this AskAthena application");
+            require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
+            require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
+            
+            // Record vote in genesis
+            genesis.setAskAthenaVote(athenaId, msg.sender);
+            
+            // Update vote counts in genesis
+            if (_voteFor) {
+                genesis.updateAskAthenaVotes(athenaId, athenaApp.votesFor + voteWeight, athenaApp.votesAgainst);
+            } else {
+                genesis.updateAskAthenaVotes(athenaId, athenaApp.votesFor, athenaApp.votesAgainst + voteWeight);
+            }
+            
+            // REVISED: Call local NOWJC contract instead of bridge to rewards
+            if (address(nowjContract) != address(0)) {
+                nowjContract.incrementGovernanceAction(msg.sender);
+            }
+            
+            // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
         }
         
-        // REVISED: Call local NOWJC contract instead of bridge to rewards
-        if (address(nowjContract) != address(0)) {
-            nowjContract.incrementGovernanceAction(msg.sender);
-        }
+        // ==================== REVISED FINALIZE DISPUTE FUNCTION ====================
         
-        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
-    }
-    
-    function _voteOnAskAthena(
-        string memory _disputeId, 
-        bool _voteFor, 
-        address /* _claimAddress */, 
-        uint256 voteWeight
-    ) internal {
-        uint256 athenaId = stringToUint(_disputeId);
-        
-        // Get askAthena application from genesis
-        IOpenworkGenesis.AskAthenaApplication memory athenaApp = genesis.getAskAthenaApplication(athenaId);
-        require(athenaApp.applicant != address(0), "AskAthena application does not exist");
-        require(!genesis.hasUserVotedOnAskAthena(athenaId, msg.sender), "Already voted on this AskAthena application");
-        require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
-        require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
-        
-        // Record vote in genesis
-        genesis.setAskAthenaVote(athenaId, msg.sender);
-        
-        // Update vote counts in genesis
-        if (_voteFor) {
-            genesis.updateAskAthenaVotes(athenaId, athenaApp.votesFor + voteWeight, athenaApp.votesAgainst);
-        } else {
-            genesis.updateAskAthenaVotes(athenaId, athenaApp.votesFor, athenaApp.votesAgainst + voteWeight);
-        }
-        
-        // REVISED: Call local NOWJC contract instead of bridge to rewards
-        if (address(nowjContract) != address(0)) {
-            nowjContract.incrementGovernanceAction(msg.sender);
-        }
-        
-        // REVISED: No cross-chain call needed during voting - voter info stored locally in genesis
-    }
-    
-    // ==================== REVISED FINALIZE DISPUTE FUNCTION ====================
-    
-    function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
-        // Get dispute from genesis
+        function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
         require(dispute.timeStamp > 0, "Dispute does not exist");
         require(dispute.isVotingActive, "Voting is not active for this dispute");
         require(!dispute.isFinalized, "Dispute already finalized");
         require(block.timestamp > dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
         
-        // Finalize the dispute in genesis
-        bool result = dispute.votesFor > dispute.votesAgainst;
-        genesis.finalizeDispute(_disputeId, result);
+        bool winningSide = dispute.votesFor > dispute.votesAgainst;
+        genesis.finalizeDispute(_disputeId, winningSide);
         
-        // REVISED: Send dispute result AND all voting data to AthenaClient
+        // Get all voter data and filter for winners only
+        VoterData[] memory allVoterData = disputeVoters[_disputeId];
+        require(allVoterData.length > 0, "No voters found for this dispute");
+        
+        // Count winning voters
+        uint256 winningVoterCount = 0;
+        for (uint256 i = 0; i < allVoterData.length; i++) {
+            if (allVoterData[i].voteFor == winningSide) {
+                winningVoterCount++;
+            }
+        }
+        
+        // Create arrays for winning voters only
+        address[] memory winningVoters = new address[](winningVoterCount);
+        address[] memory winningClaimAddresses = new address[](winningVoterCount);
+        uint256[] memory winningVotingPowers = new uint256[](winningVoterCount);
+        bool[] memory winningVoteDirections = new bool[](winningVoterCount);
+        
+        // Populate arrays with winning voters
+        uint256 winnerIndex = 0;
+        for (uint256 i = 0; i < allVoterData.length; i++) {
+            if (allVoterData[i].voteFor == winningSide) {
+                winningVoters[winnerIndex] = allVoterData[i].voter;
+                winningClaimAddresses[winnerIndex] = allVoterData[i].claimAddress;
+                winningVotingPowers[winnerIndex] = allVoterData[i].votingPower;
+                winningVoteDirections[winnerIndex] = allVoterData[i].voteFor;
+                winnerIndex++;
+            }
+        }
+        
+        // Send to AthenaClient
         require(address(bridge) != address(0), "Bridge not set");
         require(msg.value > 0, "Fee required for cross-chain call");
         
-        // Include all dispute voting data in the payload
         bytes memory payload = abi.encode(
             "finalizeDisputeWithVotes", 
             _disputeId, 
-            result,
+            winningSide,
             dispute.votesFor,
-            dispute.votesAgainst
+            dispute.votesAgainst,
+            winningVoters,
+            winningClaimAddresses,
+            winningVotingPowers,
+            winningVoteDirections
         );
+        
         bridge.sendToAthenaClientChain{value: msg.value}("finalizeDisputeWithVotes", payload, _athenaClientOptions);
         
-        emit DisputeFinalized(_disputeId, result, dispute.votesFor, dispute.votesAgainst);
+        emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
     }
     
     // ==================== UTILITY FUNCTIONS ====================

@@ -8,7 +8,16 @@ import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/I
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IAthenaClient {
-    function handleFinalizeDisputeWithVotes(string memory disputeId, bool winningSide, uint256 votesFor, uint256 votesAgainst) external;
+    function handleFinalizeDisputeWithVotes(
+        string memory disputeId, 
+        bool winningSide, 
+        uint256 votesFor, 
+        uint256 votesAgainst,
+        address[] memory voters,
+        address[] memory claimAddresses,
+        uint256[] memory votingPowers,
+        bool[] memory voteDirections
+    ) external;
     function handleRecordVote(string memory disputeId, address voter, address claimAddress, uint256 votingPower, bool voteFor) external;
 }
 
@@ -96,10 +105,16 @@ function _lzReceive(
 
     // --- 3) ATHENA CLIENT MESSAGES ---
     else if (keccak256(bytes(functionName)) == keccak256("finalizeDisputeWithVotes")) {
-        (, string memory disputeId, bool result, uint256 votesFor, uint256 votesAgainst) =
-            abi.decode(_message, (string, string, bool, uint256, uint256));
-        IAthenaClient(athenaClientContract).handleFinalizeDisputeWithVotes(disputeId, result, votesFor, votesAgainst);
-    }
+    (, string memory disputeId, bool winningSide, uint256 votesFor, uint256 votesAgainst,
+     address[] memory voters, address[] memory claimAddresses, 
+     uint256[] memory votingPowers, bool[] memory voteDirections) =
+        abi.decode(_message, (string, string, bool, uint256, uint256, address[], address[], uint256[], bool[]));
+    
+    IAthenaClient(athenaClientContract).handleFinalizeDisputeWithVotes(
+        disputeId, winningSide, votesFor, votesAgainst,
+        voters, claimAddresses, votingPowers, voteDirections
+    );
+}
 
     // --- 4) unknown function → revert ---
     else {

@@ -24,16 +24,16 @@ interface INativeAthena {
 }
 
 interface INativeOpenWorkJobContract {
-    function handleCreateProfile(address user, string memory ipfsHash, address referrer) external;
-    function handlePostJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external;
-    function handleApplyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external;
-    function handleStartJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external;
-    function handleSubmitWork(address applicant, string memory jobId, string memory submissionHash) external;
-    function handleReleasePayment(address jobGiver, string memory jobId, uint256 amount) external;
-    function handleLockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) external;
-    function handleReleasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external;
-    function handleRate(address rater, string memory jobId, address userToRate, uint256 rating) external;
-    function handleAddPortfolio(address user, string memory portfolioHash) external;
+    function createProfile(address user, string memory ipfsHash, address referrer) external;
+    function postJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external;
+    function applyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external;
+    function startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external;
+    function submitWork(address applicant, string memory jobId, string memory submissionHash) external;
+    function releasePayment(address jobGiver, string memory jobId, uint256 amount) external;
+    function lockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) external;
+    function releasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external;
+    function rate(address rater, string memory jobId, address userToRate, uint256 rating) external;
+    function addPortfolio(address user, string memory portfolioHash) external;
     function incrementGovernanceAction(address user) external;
 
     function sendSyncRewardsData(
@@ -169,48 +169,47 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         }
         
         // ==================== NATIVE OPENWORK JOB CONTRACT MESSAGES ====================
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleCreateProfile(user, ipfsHash, referrer);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handlePostJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleApplyToJob(applicant, jobId, applicationHash, descriptions, amounts);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleStartJob(jobGiver, jobId, applicationId, useApplicantMilestones);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleSubmitWork(applicant, jobId, submissionHash);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleReleasePayment(jobGiver, jobId, amount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleLockNextMilestone(caller, jobId, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleReleasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleRate(rater, jobId, userToRate, rating);
-        } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
-            require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleAddPortfolio(user, portfolioHash);
-        }
-        
+    else if (keccak256(bytes(functionName)) == keccak256(bytes("createProfile"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address user, string memory ipfsHash, address referrer) = abi.decode(_message, (string, address, string, address));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).createProfile(user, ipfsHash, referrer);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("postJob"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, string, address, string, string[], uint256[]));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).postJob(jobId, jobGiver, jobDetailHash, descriptions, amounts);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("applyToJob"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) = abi.decode(_message, (string, address, string, string, string[], uint256[]));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).applyToJob(applicant, jobId, applicationHash, descriptions, amounts);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).submitWork(applicant, jobId, submissionHash);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePayment(jobGiver, jobId, amount);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).lockNextMilestone(caller, jobId, lockedAmount);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).rate(rater, jobId, userToRate, rating);
+    } else if (keccak256(bytes(functionName)) == keccak256(bytes("addPortfolio"))) {
+        require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
+        (, address user, string memory portfolioHash) = abi.decode(_message, (string, address, string));
+        INativeOpenWorkJobContract(nativeOpenWorkJobContract).addPortfolio(user, portfolioHash);
+    }
         // ==================== NEW: GOVERNANCE ACTION HANDLING ====================
         else if (keccak256(bytes(functionName)) == keccak256(bytes("incrementGovernanceAction"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
