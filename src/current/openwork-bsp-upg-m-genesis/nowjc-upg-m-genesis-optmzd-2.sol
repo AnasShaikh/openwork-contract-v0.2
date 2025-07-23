@@ -77,7 +77,7 @@ interface IOpenworkGenesis {
     function getUserReferrer(address user) external view returns (address);
     function getUserEarnedTokens(address user) external view returns (uint256);
     function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256);
-    function getUserTotalGovernanceActions(address user) external view returns (uint256);
+    function getUserGovernanceActions(address user) external view returns (uint256); // Change from getUserTotalGovernanceActions
     function getUserRewardInfo(address user) external view returns (uint256 totalTokens, uint256 governanceActions);
     function totalPlatformPayments() external view returns (uint256);
 }
@@ -313,7 +313,7 @@ contract NativeOpenWorkJobContract is
         uint256 currentBand = address(rewardsContract) != address(0) ? 
             rewardsContract.getCurrentBand() : 0;
         
-        uint256 newTotal = genesis.getUserTotalGovernanceActions(user);
+        uint256 newTotal = genesis.getUserGovernanceActions(user);
         emit GovernanceActionIncremented(user, newTotal, currentBand);
     }
 
@@ -410,7 +410,7 @@ contract NativeOpenWorkJobContract is
         if (address(rewardsContract) != address(0)) {
             return rewardsContract.getUserTotalGovernanceActions(user);
         }
-        return genesis.getUserTotalGovernanceActions(user);
+        return genesis.getUserGovernanceActions(user);
     }
 
     function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256) {
