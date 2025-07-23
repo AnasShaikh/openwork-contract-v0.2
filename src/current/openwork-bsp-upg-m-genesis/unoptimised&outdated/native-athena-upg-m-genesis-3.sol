@@ -137,8 +137,7 @@ interface INativeChainBridge {
         bytes calldata _options
     ) external payable;
     
-    function sendToLocalChain(
-        string memory _disputeId,
+    function sendToAthenaClientChain(
         string memory _functionName,
         bytes memory _payload,
         bytes calldata _options
@@ -157,8 +156,7 @@ interface INativeChainBridge {
         bytes calldata _options
     ) external view returns (uint256 fee);
     
-    function quoteLocalChain(
-        string memory _disputeId,
+    function quoteAthenaClientChain(
         bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee);
@@ -643,63 +641,55 @@ contract NativeAthena is
         // ==================== REVISED FINALIZE DISPUTE FUNCTION - NOW USING GENESIS FOR VOTER DATA ====================
         
     function finalizeDispute(string memory _disputeId, bytes calldata _athenaClientOptions) external payable {
-        IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-        require(dispute.timeStamp > 0, "Dispute does not exist");
-        require(!dispute.isFinalized, "Dispute already finalized");
-        
-        bool winningSide = dispute.votesFor > dispute.votesAgainst;
-        genesis.finalizeDispute(_disputeId, winningSide);
-        
-        // Get all voter data from Genesis and filter for winners only
-        IOpenworkGenesis.VoterData[] memory allVoterData = genesis.getDisputeVoters(_disputeId);
-        require(allVoterData.length > 0, "No voters found for this dispute");
-        
-        // Count winning voters
-        uint256 winningVoterCount = 0;
-        for (uint256 i = 0; i < allVoterData.length; i++) {
-            if (allVoterData[i].voteFor == winningSide) {
-                winningVoterCount++;
+            IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
+            require(dispute.timeStamp > 0, "Dispute does not exist");
+            require(!dispute.isFinalized, "Dispute already finalized");
+            
+            bool winningSide = dispute.votesFor > dispute.votesAgainst;
+            genesis.finalizeDispute(_disputeId, winningSide);
+            
+            // Get all voter data from Genesis and filter for winners only
+            IOpenworkGenesis.VoterData[] memory allVoterData = genesis.getDisputeVoters(_disputeId);
+            require(allVoterData.length > 0, "No voters found for this dispute");
+            
+            // Count winning voters
+            uint256 winningVoterCount = 0;
+            for (uint256 i = 0; i < allVoterData.length; i++) {
+                if (allVoterData[i].voteFor == winningSide) {
+                    winningVoterCount++;
+                }
             }
-        }
-        
-        // Create arrays for winning voters only
-        address[] memory winningVoters = new address[](winningVoterCount);
-        address[] memory winningClaimAddresses = new address[](winningVoterCount);
-        uint256[] memory winningVotingPowers = new uint256[](winningVoterCount);
-        bool[] memory winningVoteDirections = new bool[](winningVoterCount);
-        
-        // Populate arrays with winning voters
-        uint256 winnerIndex = 0;
-        for (uint256 i = 0; i < allVoterData.length; i++) {
-            if (allVoterData[i].voteFor == winningSide) {
-                winningVoters[winnerIndex] = allVoterData[i].voter;
-                winningClaimAddresses[winnerIndex] = allVoterData[i].claimAddress;
-                winningVotingPowers[winnerIndex] = allVoterData[i].votingPower;
-                winningVoteDirections[winnerIndex] = allVoterData[i].voteFor;
-                winnerIndex++;
+            
+            // Create arrays for winning claim addresses and their voting powers
+            address[] memory winningClaimAddresses = new address[](winningVoterCount);
+            uint256[] memory winningVotingPowers = new uint256[](winningVoterCount);
+            
+            // Populate arrays with winning voters' data
+            uint256 winnerIndex = 0;
+            for (uint256 i = 0; i < allVoterData.length; i++) {
+                if (allVoterData[i].voteFor == winningSide) {
+                    winningClaimAddresses[winnerIndex] = allVoterData[i].claimAddress;
+                    winningVotingPowers[winnerIndex] = allVoterData[i].votingPower;
+                    winnerIndex++;
+                }
             }
+            
+            // Send payload to AthenaClient
+            require(address(bridge) != address(0), "Bridge not set");
+            require(msg.value > 0, "Fee required for cross-chain call");
+            
+            bytes memory payload = abi.encode(
+                "finalizeDispute", 
+                _disputeId, 
+                winningSide,
+                winningClaimAddresses,
+                winningVotingPowers
+            );
+            
+            bridge.sendToAthenaClientChain{value: msg.value}("finalizeDispute", payload, _athenaClientOptions);
+            
+            emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
         }
-        
-        // Send to AthenaClient via LocalChain
-        require(address(bridge) != address(0), "Bridge not set");
-        require(msg.value > 0, "Fee required for cross-chain call");
-        
-        bytes memory payload = abi.encode(
-            "finalizeDisputeWithVotes", 
-            _disputeId, 
-            winningSide,
-            dispute.votesFor,
-            dispute.votesAgainst,
-            winningVoters,
-            winningClaimAddresses,
-            winningVotingPowers,
-            winningVoteDirections
-        );
-        
-        bridge.sendToLocalChain{value: msg.value}(_disputeId, "finalizeDisputeWithVotes", payload, _athenaClientOptions);
-        
-        emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
-}
     
     // ==================== UTILITY FUNCTIONS ====================
     
