@@ -182,9 +182,7 @@ contract NativeOpenWorkJobContract is
     
     // Bridge reference
     address public bridge;
-    
-    // NEW: Track last synced band per user to avoid duplicate syncing
-  //  mapping(address => uint256) public userLastSyncedBand;
+    mapping(address => bool) public authorizedContracts;
 
     // ==================== EVENTS ====================
     
@@ -206,6 +204,8 @@ contract NativeOpenWorkJobContract is
     event TokensEarned(address indexed user, uint256 tokensEarned, uint256 newPlatformTotal, uint256 newUserTotalTokens);
     event ClaimDataUpdated(address indexed user, uint256 claimedJobTokens, uint256 claimedGovernanceTokens);
     event RewardsDataSynced(address indexed user, uint256 syncType, uint256 claimableAmount, uint256 reserved);   
+    event AuthorizedContractAdded(address indexed contractAddress);
+    event AuthorizedContractRemoved(address indexed contractAddress);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -224,6 +224,21 @@ contract NativeOpenWorkJobContract is
         bridge = _bridge;
         genesis = IOpenworkGenesis(_genesis);
         rewardsContract = IOpenWorkRewards(_rewardsContract);
+    }
+
+    function addAuthorizedContract(address contractAddress) external onlyOwner {
+        require(contractAddress != address(0), "Invalid contract address");
+        authorizedContracts[contractAddress] = true;
+        emit AuthorizedContractAdded(contractAddress);
+    }
+
+    function removeAuthorizedContract(address contractAddress) external onlyOwner {
+        authorizedContracts[contractAddress] = false;
+        emit AuthorizedContractRemoved(contractAddress);
+    }
+
+    function isAuthorizedContract(address contractAddress) external view returns (bool) {
+        return authorizedContracts[contractAddress];
     }
 
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
@@ -282,8 +297,10 @@ contract NativeOpenWorkJobContract is
      * Called by bridge when user performs governance actions
      */
     function incrementGovernanceAction(address user) external {
-        require(msg.sender == bridge, "Only bridge can call this function");
-        
+        require(
+                msg.sender == bridge || authorizedContracts[msg.sender], 
+                "Only bridge or authorized contracts can call this function"
+            );        
         // Update Genesis for backward compatibility
         genesis.incrementUserGovernanceActions(user);
         
