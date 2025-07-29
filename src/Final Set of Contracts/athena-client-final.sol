@@ -129,7 +129,7 @@ contract AthenaClientContract is
         upgradeToAndCall(newImplementation, "");
     }
     
-    // ==================== REVISED MESSAGE HANDLERS ====================
+    // ==================== MESSAGE HANDLERS ====================
     
     function handleFinalizeDisputeWithVotes(
         string memory disputeId, 
