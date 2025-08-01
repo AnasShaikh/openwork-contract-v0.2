@@ -191,6 +191,7 @@ contract NativeAthena is
     uint32 public rewardsChainEid;
     uint32 public athenaClientChainEid;
     
+    
     // Add this enum to define voting types
     enum VotingType {
         Dispute,
@@ -253,6 +254,8 @@ contract NativeAthena is
     uint256 public minOracleMembers;
     uint256 public votingPeriodMinutes;
     uint256 public minStakeRequired;
+    mapping(address => uint256) public voterTotalVotes;
+    mapping(address => uint256) public voterCorrectVotes;
         
     // Events
     event NOWJContractUpdated(address indexed oldContract, address indexed newContract);
@@ -698,6 +701,16 @@ contract NativeAthena is
         
         bridge.sendToLocalChain{value: msg.value}(_disputeId, "finalizeDisputeWithVotes", payload, _athenaClientOptions);
         
+        for (uint256 i = 0; i < allVoterData.length; i++) {
+        address voter = allVoterData[i].voter;
+        bool votedCorrectly = allVoterData[i].voteFor == winningSide;
+        
+        voterTotalVotes[voter]++;
+        if (votedCorrectly) {
+            voterCorrectVotes[voter]++;
+        }
+        }
+
         emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
 }
     

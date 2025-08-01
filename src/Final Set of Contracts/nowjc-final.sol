@@ -182,6 +182,8 @@ contract NativeOpenWorkJobContract is
     
     // Bridge reference
     address public bridge;
+    address[] private allProfileUsers;
+    uint256 private profileCount;
     mapping(address => bool) public authorizedContracts;
 
     // ==================== EVENTS ====================
@@ -460,6 +462,9 @@ contract NativeOpenWorkJobContract is
     
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
         require(!genesis.hasProfile(_user), "Profile already exists");
+
+        allProfileUsers.push(_user);
+        profileCount++;
         
         genesis.setProfile(_user, _ipfsHash, _referrerAddress);
         emit ProfileCreated(_user, _ipfsHash, _referrerAddress);
@@ -669,6 +674,27 @@ contract NativeOpenWorkJobContract is
     
     // ==================== VIEW FUNCTIONS ====================
     
+    // Add these to the VIEW FUNCTIONS section
+    
+    function getProfileCount() external view returns (uint256) {
+            return profileCount;
+        }
+
+    function getProfileByIndex(uint256 _index) external view returns (Profile memory) {
+        require(_index < profileCount, "Index out of bounds");
+        address userAddress = allProfileUsers[_index];
+        IOpenworkGenesis.Profile memory genesisProfile = genesis.getProfile(userAddress);
+        return Profile({
+            userAddress: genesisProfile.userAddress,
+            ipfsHash: genesisProfile.ipfsHash,
+            referrerAddress: genesisProfile.referrerAddress,
+            portfolioHashes: genesisProfile.portfolioHashes
+        });
+    }
+
+    function getAllProfileUsers() external view returns (address[] memory) {
+        return allProfileUsers;
+    }
     function getJobCount() external view returns (uint256) {
         return genesis.getJobCount();
     }
