@@ -45,6 +45,9 @@ contract HyperlaneMainChainBridge is Ownable {
     uint32 public athenaClientChainDomain; // Chain where AthenaClient is deployed
     uint32 public lowjcChainDomain;       // Chain where LOWJC is deployed
     
+    // NEW: Recipient address management for cross-chain messages
+    mapping(uint32 => address) public chainRecipients;
+    
     // Events
     event CrossChainMessageSent(string indexed functionName, uint32 dstDomain, bytes payload);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceDomain, bytes data);
@@ -52,6 +55,7 @@ contract HyperlaneMainChainBridge is Ownable {
     event ChainDomainUpdated(string indexed chainType, uint32 newDomain);
     event ContractAddressSet(string indexed contractType, address contractAddress);
     event UpgradeCommandSent(uint32 indexed targetChain, address indexed targetProxy, address indexed newImplementation);
+    event RecipientAddressSet(uint32 indexed chainDomain, address indexed recipientAddress);
     
     modifier onlyAuthorized() {
         require(authorizedContracts[msg.sender], "Not authorized to use bridge");
@@ -91,7 +95,10 @@ contract HyperlaneMainChainBridge is Ownable {
     ) external payable onlyMainDAO {
         // encode the call for the receiving side
         bytes memory payload = abi.encode("upgradeFromDAO", targetProxy, newImplementation);
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        
+        address recipient = chainRecipients[_dstChainDomain];
+        require(recipient != address(0), "Destination chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
 
         mailbox.dispatch{value: msg.value}(
             _dstChainDomain,
@@ -107,8 +114,10 @@ contract HyperlaneMainChainBridge is Ownable {
         address targetProxy,
         address newImplementation
     ) external view returns (uint256 fee) {
-        bytes memory payload = abi.encode("upgradeContract", targetProxy, newImplementation);
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        bytes memory payload = abi.encode("upgradeFromDAO", targetProxy, newImplementation);
+        address recipient = chainRecipients[targetChainDomain];
+        require(recipient != address(0), "Destination chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         return mailbox.quoteDispatch(targetChainDomain, recipientAddress, payload);
     }
     
@@ -126,7 +135,7 @@ contract HyperlaneMainChainBridge is Ownable {
         (string memory functionName) = abi.decode(_message, (string));
         
         // ==================== UPGRADE HANDLING ====================
-        if (keccak256(bytes(functionName)) == keccak256(bytes("upgradeContract"))) {
+        if (keccak256(bytes(functionName)) == keccak256(bytes("upgradeFromDAO"))) {
             // This should never be called on main chain bridge
             // Upgrade commands are sent FROM here, not TO here
             revert("Upgrade commands should originate from Main DAO, not be received");
@@ -160,7 +169,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes memory _payload,
         bytes calldata /* _options */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[nativeChainDomain];
+        require(recipient != address(0), "Native chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         
         mailbox.dispatch{value: msg.value}(
             nativeChainDomain,
@@ -176,7 +187,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes memory _payload,
         bytes calldata /* _options */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[athenaClientChainDomain];
+        require(recipient != address(0), "Athena client chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         
         mailbox.dispatch{value: msg.value}(
             athenaClientChainDomain,
@@ -192,7 +205,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes memory _payload,
         bytes calldata /* _options */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[lowjcChainDomain];
+        require(recipient != address(0), "LOWJC chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         
         mailbox.dispatch{value: msg.value}(
             lowjcChainDomain,
@@ -209,7 +224,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes memory _payload,
         bytes calldata /* _options */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[_dstDomain];
+        require(recipient != address(0), "Destination chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         
         mailbox.dispatch{value: msg.value}(
             _dstDomain,
@@ -229,11 +246,17 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata /* _options1 */,
         bytes calldata /* _options2 */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient1 = chainRecipients[_dstDomain1];
+        address recipient2 = chainRecipients[_dstDomain2];
+        require(recipient1 != address(0), "Chain 1 recipient not set");
+        require(recipient2 != address(0), "Chain 2 recipient not set");
+        
+        bytes32 recipientAddress1 = bytes32(uint256(uint160(recipient1)));
+        bytes32 recipientAddress2 = bytes32(uint256(uint160(recipient2)));
         
         // Calculate total fees upfront
-        uint256 fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress, _payload1);
-        uint256 fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress, _payload2);
+        uint256 fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress1, _payload1);
+        uint256 fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress2, _payload2);
         uint256 totalFee = fee1 + fee2;
         
         require(msg.value >= totalFee, "Insufficient fee provided");
@@ -241,14 +264,14 @@ contract HyperlaneMainChainBridge is Ownable {
         // Send to first chain
         mailbox.dispatch{value: fee1}(
             _dstDomain1,
-            recipientAddress,
+            recipientAddress1,
             _payload1
         );
         
         // Send to second chain
         mailbox.dispatch{value: fee2}(
             _dstDomain2,
-            recipientAddress,
+            recipientAddress2,
             _payload2
         );
         
@@ -268,20 +291,29 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata /* _options2 */,
         bytes calldata /* _options3 */
     ) external payable onlyAuthorized {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient1 = chainRecipients[_dstDomain1];
+        address recipient2 = chainRecipients[_dstDomain2];
+        address recipient3 = chainRecipients[_dstDomain3];
+        require(recipient1 != address(0), "Chain 1 recipient not set");
+        require(recipient2 != address(0), "Chain 2 recipient not set");
+        require(recipient3 != address(0), "Chain 3 recipient not set");
+        
+        bytes32 recipientAddress1 = bytes32(uint256(uint160(recipient1)));
+        bytes32 recipientAddress2 = bytes32(uint256(uint160(recipient2)));
+        bytes32 recipientAddress3 = bytes32(uint256(uint160(recipient3)));
         
         // Calculate total fees upfront
-        uint256 fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress, _payload1);
-        uint256 fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress, _payload2);
-        uint256 fee3 = mailbox.quoteDispatch(_dstDomain3, recipientAddress, _payload3);
+        uint256 fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress1, _payload1);
+        uint256 fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress2, _payload2);
+        uint256 fee3 = mailbox.quoteDispatch(_dstDomain3, recipientAddress3, _payload3);
         uint256 totalFee = fee1 + fee2 + fee3;
         
         require(msg.value >= totalFee, "Insufficient fee provided");
         
         // Send to all three chains
-        mailbox.dispatch{value: fee1}(_dstDomain1, recipientAddress, _payload1);
-        mailbox.dispatch{value: fee2}(_dstDomain2, recipientAddress, _payload2);
-        mailbox.dispatch{value: fee3}(_dstDomain3, recipientAddress, _payload3);
+        mailbox.dispatch{value: fee1}(_dstDomain1, recipientAddress1, _payload1);
+        mailbox.dispatch{value: fee2}(_dstDomain2, recipientAddress2, _payload2);
+        mailbox.dispatch{value: fee3}(_dstDomain3, recipientAddress3, _payload3);
         
         emit CrossChainMessageSent(_functionName, _dstDomain1, _payload1);
         emit CrossChainMessageSent(_functionName, _dstDomain2, _payload2);
@@ -294,7 +326,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata _payload,
         bytes calldata /* _options */
     ) external view returns (uint256 fee) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[nativeChainDomain];
+        require(recipient != address(0), "Native chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         return mailbox.quoteDispatch(nativeChainDomain, recipientAddress, _payload);
     }
     
@@ -302,7 +336,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata _payload,
         bytes calldata /* _options */
     ) external view returns (uint256 fee) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[athenaClientChainDomain];
+        require(recipient != address(0), "Athena client chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         return mailbox.quoteDispatch(athenaClientChainDomain, recipientAddress, _payload);
     }
     
@@ -310,7 +346,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata _payload,
         bytes calldata /* _options */
     ) external view returns (uint256 fee) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[lowjcChainDomain];
+        require(recipient != address(0), "LOWJC chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         return mailbox.quoteDispatch(lowjcChainDomain, recipientAddress, _payload);
     }
     
@@ -319,7 +357,9 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata _payload,
         bytes calldata /* _options */
     ) external view returns (uint256 fee) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient = chainRecipients[_dstDomain];
+        require(recipient != address(0), "Destination chain recipient not set");
+        bytes32 recipientAddress = bytes32(uint256(uint160(recipient)));
         return mailbox.quoteDispatch(_dstDomain, recipientAddress, _payload);
     }
     
@@ -331,10 +371,16 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata /* _options1 */,
         bytes calldata /* _options2 */
     ) external view returns (uint256 totalFee, uint256 fee1, uint256 fee2) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient1 = chainRecipients[_dstDomain1];
+        address recipient2 = chainRecipients[_dstDomain2];
+        require(recipient1 != address(0), "Chain 1 recipient not set");
+        require(recipient2 != address(0), "Chain 2 recipient not set");
         
-        fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress, _payload1);
-        fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress, _payload2);
+        bytes32 recipientAddress1 = bytes32(uint256(uint160(recipient1)));
+        bytes32 recipientAddress2 = bytes32(uint256(uint160(recipient2)));
+        
+        fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress1, _payload1);
+        fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress2, _payload2);
         totalFee = fee1 + fee2;
     }
     
@@ -349,11 +395,20 @@ contract HyperlaneMainChainBridge is Ownable {
         bytes calldata /* _options2 */,
         bytes calldata /* _options3 */
     ) external view returns (uint256 totalFee, uint256 fee1, uint256 fee2, uint256 fee3) {
-        bytes32 recipientAddress = bytes32(uint256(uint160(address(this))));
+        address recipient1 = chainRecipients[_dstDomain1];
+        address recipient2 = chainRecipients[_dstDomain2];
+        address recipient3 = chainRecipients[_dstDomain3];
+        require(recipient1 != address(0), "Chain 1 recipient not set");
+        require(recipient2 != address(0), "Chain 2 recipient not set");
+        require(recipient3 != address(0), "Chain 3 recipient not set");
         
-        fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress, _payload1);
-        fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress, _payload2);
-        fee3 = mailbox.quoteDispatch(_dstDomain3, recipientAddress, _payload3);
+        bytes32 recipientAddress1 = bytes32(uint256(uint160(recipient1)));
+        bytes32 recipientAddress2 = bytes32(uint256(uint160(recipient2)));
+        bytes32 recipientAddress3 = bytes32(uint256(uint160(recipient3)));
+        
+        fee1 = mailbox.quoteDispatch(_dstDomain1, recipientAddress1, _payload1);
+        fee2 = mailbox.quoteDispatch(_dstDomain2, recipientAddress2, _payload2);
+        fee3 = mailbox.quoteDispatch(_dstDomain3, recipientAddress3, _payload3);
         totalFee = fee1 + fee2 + fee3;
     }
     
@@ -373,6 +428,23 @@ contract HyperlaneMainChainBridge is Ownable {
     function setRewardsContract(address _rewards) external onlyOwner {
         rewardsContract = _rewards;
         emit ContractAddressSet("rewards", _rewards);
+    }
+    
+    // NEW: Recipient address management functions
+    function setRecipientForChain(uint32 _chainDomain, address _recipient) external onlyOwner {
+        require(_recipient != address(0), "Invalid recipient address");
+        chainRecipients[_chainDomain] = _recipient;
+        emit RecipientAddressSet(_chainDomain, _recipient);
+    }
+    
+    function setRecipientsForChains(uint32[] calldata _chainDomains, address[] calldata _recipients) external onlyOwner {
+        require(_chainDomains.length == _recipients.length, "Array length mismatch");
+        
+        for (uint256 i = 0; i < _chainDomains.length; i++) {
+            require(_recipients[i] != address(0), "Invalid recipient address");
+            chainRecipients[_chainDomains[i]] = _recipients[i];
+            emit RecipientAddressSet(_chainDomains[i], _recipients[i]);
+        }
     }
     
     function updateNativeChainDomain(uint32 _nativeChainDomain) external onlyOwner {
@@ -409,5 +481,9 @@ contract HyperlaneMainChainBridge is Ownable {
     
     function getMailbox() external view returns (address) {
         return address(mailbox);
+    }
+    
+    function getRecipientForChain(uint32 _chainDomain) external view returns (address) {
+        return chainRecipients[_chainDomain];
     }
 }
