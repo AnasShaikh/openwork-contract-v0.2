@@ -2,39 +2,52 @@
 pragma solidity ^0.8.22;
 
 interface IMailbox {
-    function localDomain() external view returns (uint32);
+    // Mailbox interface for verification only
 }
 
 /**
  * @title HyperlaneReceiver
- * @dev Minimal contract to receive messages from OP Sepolia via Hyperlane
+ * @dev Simple contract to receive messages from Optimism Sepolia via Hyperlane
+ * Based on official Hyperlane documentation
  */
 contract HyperlaneReceiver {
     IMailbox public immutable mailbox;
     
-    // Hyperlane domain IDs
-    uint32 public constant OP_SEPOLIA_DOMAIN = 11155420;
+    // Hyperlane domain IDs (from official docs)
+    uint32 public constant OPTIMISM_SEPOLIA_DOMAIN = 11155420;
+    uint32 public constant ARBITRUM_SEPOLIA_DOMAIN = 421614;
     
-    // State variable that will be updated
-    uint256 public storedValue;
+    // Storage for received messages
+    string public lastMessage;
+    uint256 public lastValue;
     address public lastSender;
     uint32 public lastOriginDomain;
+    uint256 public messageCount;
     
     // Events
-    event ValueUpdated(uint256 newValue, address sender, uint32 originDomain);
-    event MessageReceived(uint32 origin, bytes32 sender, bytes message);
+    event MessageReceived(
+        uint32 indexed origin,
+        bytes32 indexed sender,
+        string message
+    );
+    
+    event ValueReceived(
+        uint32 indexed origin,
+        bytes32 indexed sender,
+        uint256 value
+    );
     
     // Errors
     error UnauthorizedMailbox();
-    error UnauthorizedOrigin();
+    error UnauthorizedOrigin(uint32 origin);
     
     modifier onlyMailbox() {
         if (msg.sender != address(mailbox)) revert UnauthorizedMailbox();
         _;
     }
     
-    modifier onlyFromOpSepolia(uint32 _origin) {
-        if (_origin != OP_SEPOLIA_DOMAIN) revert UnauthorizedOrigin();
+    modifier onlyFromOptimismSepolia(uint32 _origin) {
+        if (_origin != OPTIMISM_SEPOLIA_DOMAIN) revert UnauthorizedOrigin(_origin);
         _;
     }
     
@@ -44,6 +57,7 @@ contract HyperlaneReceiver {
     
     /**
      * @dev Handle incoming messages from Hyperlane
+     * This is the function that Hyperlane calls when delivering a message
      * @param _origin Domain ID of the origin chain
      * @param _sender Address of the sender (as bytes32)
      * @param _message The message body
@@ -52,36 +66,84 @@ contract HyperlaneReceiver {
         uint32 _origin,
         bytes32 _sender,
         bytes calldata _message
-    ) external onlyMailbox onlyFromOpSepolia(_origin) {
+    ) external onlyMailbox onlyFromOptimismSepolia(_origin) {
         
-        emit MessageReceived(_origin, _sender, _message);
-        
-        // Decode the message to get the new value
-        uint256 newValue = abi.decode(_message, (uint256));
-        
-        // Update the stored value
-        storedValue = newValue;
+        // Update message tracking
+        messageCount++;
         lastSender = address(uint160(uint256(_sender)));
         lastOriginDomain = _origin;
         
-        emit ValueUpdated(newValue, lastSender, _origin);
+        // Try to decode as string first
+        try this.decodeAsString(_message) returns (string memory decodedMessage) {
+            lastMessage = decodedMessage;
+            lastValue = 0; // Reset value when receiving string
+            emit MessageReceived(_origin, _sender, decodedMessage);
+        } catch {
+            // If string decode fails, try as uint256
+            try this.decodeAsUint256(_message) returns (uint256 decodedValue) {
+                lastValue = decodedValue;
+                lastMessage = ""; // Reset message when receiving value
+                emit ValueReceived(_origin, _sender, decodedValue);
+            } catch {
+                // If both fail, treat as raw string
+                lastMessage = "Raw message received";
+                emit MessageReceived(_origin, _sender, "Raw message received");
+            }
+        }
     }
     
     /**
-     * @dev Get current stored value
+     * @dev External function to decode message as string (for try/catch)
      */
-    function getValue() external view returns (uint256) {
-        return storedValue;
+    function decodeAsString(bytes calldata _message) external pure returns (string memory) {
+        return abi.decode(_message, (string));
     }
     
     /**
-     * @dev Get last message info
+     * @dev External function to decode message as uint256 (for try/catch)  
+     */
+    function decodeAsUint256(bytes calldata _message) external pure returns (uint256) {
+        return abi.decode(_message, (uint256));
+    }
+    
+    /**
+     * @dev Get the last received message
+     */
+    function getLastMessage() external view returns (string memory) {
+        return lastMessage;
+    }
+    
+    /**
+     * @dev Get the last received value
+     */
+    function getLastValue() external view returns (uint256) {
+        return lastValue;
+    }
+    
+    /**
+     * @dev Get comprehensive info about the last message
      */
     function getLastMessageInfo() external view returns (
+        string memory message,
         uint256 value,
         address sender,
-        uint32 originDomain
+        uint32 originDomain,
+        uint256 totalMessages
     ) {
-        return (storedValue, lastSender, lastOriginDomain);
+        return (lastMessage, lastValue, lastSender, lastOriginDomain, messageCount);
+    }
+    
+    /**
+     * @dev Get the local domain of this chain (hardcoded)
+     */
+    function getLocalDomain() external pure returns (uint32) {
+        return ARBITRUM_SEPOLIA_DOMAIN;
+    }
+    
+    /**
+     * @dev Get mailbox address
+     */
+    function getMailbox() external view returns (address) {
+        return address(mailbox);
     }
 }

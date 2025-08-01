@@ -7,103 +7,83 @@ interface IMailbox {
         bytes32 recipientAddress,
         bytes calldata messageBody
     ) external payable returns (bytes32 messageId);
-    
-    function quoteDispatch(
-        uint32 destinationDomain,
-        bytes32 recipientAddress,
-        bytes calldata messageBody
-    ) external view returns (uint256 fee);
-}
-
-interface IInterchainGasPaymaster {
-    function payForGas(
-        bytes32 messageId,
-        uint32 destinationDomain,
-        uint256 gasAmount,
-        address refundAddress
-    ) external payable;
-    
-    function quoteGasPrice(uint32 destinationDomain)
-        external
-        view
-        returns (uint256);
 }
 
 /**
  * @title HyperlaneSender
- * @dev Minimal contract to send messages from OP Sepolia to Arbitrum Sepolia
+ * @dev Simple contract to send messages from Optimism Sepolia to Arbitrum Sepolia via Hyperlane
+ * Based on official Hyperlane documentation
  */
 contract HyperlaneSender {
     IMailbox public immutable mailbox;
-    IInterchainGasPaymaster public immutable igp;
     
-    // Hyperlane domain IDs
+    // Hyperlane domain IDs (from official docs)
     uint32 public constant ARBITRUM_SEPOLIA_DOMAIN = 421614;
+    uint32 public constant OPTIMISM_SEPOLIA_DOMAIN = 11155420;
     
     // Events
-    event MessageSent(bytes32 indexed messageId, uint256 newValue);
+    event MessageSent(
+        bytes32 indexed messageId, 
+        uint32 indexed destinationDomain,
+        bytes32 indexed recipient,
+        string message
+    );
     
-    constructor(address _mailbox, address _igp) {
+    constructor(address _mailbox) {
         mailbox = IMailbox(_mailbox);
-        igp = IInterchainGasPaymaster(_igp);
     }
     
     /**
-     * @dev Send a message to update value on Arbitrum Sepolia
-     * @param _receiver Address of receiver contract on Arbitrum Sepolia
-     * @param _newValue New value to set
+     * @dev Send a simple string message to Arbitrum Sepolia
+     * @param _recipient Address of receiver contract on Arbitrum Sepolia
+     * @param _message String message to send
      */
-    function sendMessage(address _receiver, uint256 _newValue) external payable {
-        // Convert receiver address to bytes32
-        bytes32 recipientAddress = bytes32(uint256(uint160(_receiver)));
+    function sendMessage(address _recipient, string calldata _message) external payable {
+        // Convert recipient address to bytes32
+        bytes32 recipientAddress = bytes32(uint256(uint160(_recipient)));
         
-        // Encode the message (function selector + new value)
-        bytes memory messageBody = abi.encode(_newValue);
+        // Encode the message as bytes
+        bytes memory messageBody = abi.encode(_message);
         
-        // Send the message
-        bytes32 messageId = mailbox.dispatch(
+        // Send the message via Hyperlane Mailbox
+        bytes32 messageId = mailbox.dispatch{value: msg.value}(
             ARBITRUM_SEPOLIA_DOMAIN,
             recipientAddress,
             messageBody
         );
         
-        // Pay for gas on destination chain
-        if (msg.value > 0) {
-            igp.payForGas{value: msg.value}(
-                messageId,
-                ARBITRUM_SEPOLIA_DOMAIN,
-                100000, // Gas limit for execution on destination
-                msg.sender // Refund address
-            );
-        }
-        
-        emit MessageSent(messageId, _newValue);
+        emit MessageSent(messageId, ARBITRUM_SEPOLIA_DOMAIN, recipientAddress, _message);
     }
     
     /**
-     * @dev Quote the cost to send a message
-     * @param _receiver Address of receiver contract
-     * @param _newValue Value to send
+     * @dev Send a numeric value to Arbitrum Sepolia
+     * @param _recipient Address of receiver contract on Arbitrum Sepolia  
+     * @param _value Numeric value to send
      */
-    function quoteMessage(address _receiver, uint256 _newValue) 
-        external 
-        view 
-        returns (uint256 fee) 
-    {
-        bytes32 recipientAddress = bytes32(uint256(uint160(_receiver)));
-        bytes memory messageBody = abi.encode(_newValue);
+    function sendValue(address _recipient, uint256 _value) external payable {
+        bytes32 recipientAddress = bytes32(uint256(uint160(_recipient)));
+        bytes memory messageBody = abi.encode(_value);
         
-        // Get dispatch fee
-        uint256 dispatchFee = mailbox.quoteDispatch(
+        bytes32 messageId = mailbox.dispatch{value: msg.value}(
             ARBITRUM_SEPOLIA_DOMAIN,
             recipientAddress,
             messageBody
         );
         
-        // Get gas price for destination
-        uint256 gasPrice = igp.quoteGasPrice(ARBITRUM_SEPOLIA_DOMAIN);
-        uint256 gasPayment = gasPrice * 100000; // 100k gas limit
-        
-        return dispatchFee + gasPayment;
+        emit MessageSent(messageId, ARBITRUM_SEPOLIA_DOMAIN, recipientAddress, "");
+    }
+    
+    /**
+     * @dev Get the local domain of this chain (hardcoded)
+     */
+    function getLocalDomain() external pure returns (uint32) {
+        return OPTIMISM_SEPOLIA_DOMAIN;
+    }
+    
+    /**
+     * @dev Get mailbox address
+     */
+    function getMailbox() external view returns (address) {
+        return address(mailbox);
     }
 }
