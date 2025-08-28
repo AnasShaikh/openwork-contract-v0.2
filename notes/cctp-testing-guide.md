@@ -101,6 +101,17 @@ cast call 0x5fd84259d66Cd46123540766Be93DFE6D43130D7 "balanceOf(address)" $OWNER
 - Both contracts function correctly for cross-chain USDC transfers
 - Total test execution time: < 5 minutes
 
+## Important Warning: Message Processing
+
+⚠️ **CRITICAL**: Before calling `processMessage()`, always check if message is already processed:
+
+```bash
+# Check message status first
+cast call $RECEIVER_CONTRACT "getMessageByNonce(uint64)" YOUR_NONCE --rpc-url $OPTIMISM_SEPOLIA_RPC_URL
+```
+
+If the `isProcessed` field shows `true`, **skip** the `processMessage()` step. Our receiver contract may auto-process messages during `receiveCCTPMessage()` to avoid duplicate processing errors.
+
 ## Contract Code Locations
 
 - **Sender Contract:** `src/current/cctp/cctp-v2-sender.sol`

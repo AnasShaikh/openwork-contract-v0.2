@@ -211,6 +211,9 @@ cast send $SENDER_CONTRACT \
 
 #### "Message already processed"
 - Each CCTP nonce can only be processed once
+- **IMPORTANT**: Our receiver contract may auto-process messages during `receiveCCTPMessage()`
+- **Always check first** with `getMessageByNonce(YOUR_NONCE)` before calling `processMessage()`
+- If `isProcessed` field shows `true`, skip the `processMessage()` step
 - Check if message was already received but not correlated
 
 #### "CCTP message verification failed"
@@ -233,6 +236,9 @@ cast call $SENDER_CONTRACT "getTotalMessagesSent()" --rpc-url $ARBITRUM_SEPOLIA_
 
 # Check receiver stats  
 cast call $RECEIVER_CONTRACT "getStats()" --rpc-url $OPTIMISM_SEPOLIA_RPC_URL
+
+# CRITICAL: Check specific message status before processing
+cast call $RECEIVER_CONTRACT "getMessageByNonce(uint64)" YOUR_NONCE --rpc-url $OPTIMISM_SEPOLIA_RPC_URL
 
 # Get unprocessed messages
 cast call $RECEIVER_CONTRACT "getUnprocessedMessages()" --rpc-url $OPTIMISM_SEPOLIA_RPC_URL
