@@ -7,3 +7,5 @@
 @layerzerolabs/test-devtools-evm-foundry/=lib/devtools/packages/test-devtools-evm-foundry/
 solidity-bytes-utils/=lib/solidity-bytes-utils/
 @layerzerolabs/lz-evm-v1-0.7/=lib/LayerZero/
+wormhole-solidity-sdk/=lib/wormhole-solidity-sdk/src/
+evm-cctp-contracts/=lib/evm-cctp-contracts/src/

@@ -1,0 +1,13 @@
+{
+  "MinimalWormholeCCTP": {
+    "ArbitrumSepolia": {
+      "address": "0x09c719cCb85B099E60E54eAF3206e261886eE686",
+      "txHash": "0x40481af9d323c26d909f625924c81570fb0701998f211a34aa104000ddadf921"
+    },
+    "OptimismSepolia": {
+      "address": "0x2A5af1db6130D3B94eC3eFc65C5398f1734a9f72",
+      "txHash": "0xf497c2340cbe967daf83ba30001fff30c491a7148ba0ca7efab26bfd64521942"
+    },
+    "deployer": "0xfD08836eeE6242092a9c869237a8d122275b024A"
+  }
+}
