@@ -6,6 +6,7 @@ import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils
 import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 interface ILayerZeroBridge {
@@ -47,30 +48,13 @@ interface ILayerZeroBridge {
     ) external view returns (uint256 totalFee, uint256 rewardsFee, uint256 nativeFee);
 }
 
-interface ITokenMessenger {
-    function depositForBurn(
-        uint256 amount,
-        uint32 destinationDomain,
-        bytes32 mintRecipient,
-        address burnToken
-    ) external returns (uint64 nonce);
-}
-
-interface IMessageTransmitter {
-    function sendMessageWithCaller(
-        uint32 destinationDomain,
-        bytes32 recipient,
-        bytes32 destinationCaller,
-        bytes calldata messageBody
-    ) external returns (uint64 nonce);
-}
-
 contract CrossChainLocalOpenWorkJobContract is 
     Initializable,
     ReentrancyGuardUpgradeable,
     OwnableUpgradeable,
     UUPSUpgradeable
 {
+    using SafeERC20 for IERC20;
     
     enum JobStatus { Open, InProgress, Completed, Cancelled }
     
@@ -126,13 +110,10 @@ contract CrossChainLocalOpenWorkJobContract is
     // Platform total tracking for rewards (local tracking only)
     uint256 public totalPlatformPayments;
     
-    IERC20 public usdcToken;    
+    IERC20 public usdtToken;    
     uint32 public chainId;
-    uint32 public nativeDomain; // CCTP domain for native chain
     ILayerZeroBridge public bridge;
-    ITokenMessenger public tokenMessenger;
-    IMessageTransmitter public messageTransmitter;
-    address public nativeChainRecipient; // NOWJC contract address on native chain
+    address public cctpSender;
     
     // Events
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
@@ -144,13 +125,12 @@ contract CrossChainLocalOpenWorkJobContract is
     event MilestoneLocked(string indexed jobId, uint256 newMilestone, uint256 lockedAmount);
     event UserRated(string indexed jobId, address indexed rater, address indexed rated, uint256 rating);
     event PortfolioAdded(address indexed user, string portfolioHash);
-    event USDCEscrowed(string indexed jobId, address indexed jobGiver, uint256 amount);
+    event FundsSent(string indexed jobId, address indexed jobGiver, uint256 amount);
     event JobStatusChanged(string indexed jobId, JobStatus newStatus);
     event PaymentReleasedAndNextMilestoneLocked(string indexed jobId, uint256 releasedAmount, uint256 lockedAmount, uint256 milestone);
     event PlatformTotalUpdated(uint256 newTotal);
     event DisputeResolved(string indexed jobId, bool jobGiverWins, address winner, uint256 amount);
     event BridgeSet(address indexed bridge);
-    event CCTPPaymentSent(string indexed jobId, uint64 cctpNonce, uint256 amount, uint256 milestone, string paymentType);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -159,62 +139,29 @@ contract CrossChainLocalOpenWorkJobContract is
     
     function initialize(
         address _owner, 
-        address _usdcToken, 
+        address _usdtToken, 
         uint32 _chainId,
         address _bridge,
-        address _cctpSender,
-        uint32 _nativeDomain,
-        address _nativeChainRecipient
+        address _cctpSender
     ) public initializer {
         __ReentrancyGuard_init();
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
         
-        usdcToken = IERC20(_usdcToken);
+        usdtToken = IERC20(_usdtToken);
         chainId = _chainId;
         bridge = ILayerZeroBridge(_bridge);
-        tokenMessenger = ITokenMessenger(_cctpSender);
-        // messageTransmitter will be set separately via setMessageTransmitter
-        nativeDomain = _nativeDomain;
-        nativeChainRecipient = _nativeChainRecipient;
+        cctpSender = _cctpSender;
+    }
+    
+    function setUSDTToken(address _newToken) external onlyOwner {
+        require(_newToken != address(0), "Invalid token address");
+        usdtToken = IERC20(_newToken);
     }
     
 function _authorizeUpgrade(address /* newImplementation */) internal view override {
     require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
 }
-
-    // ==================== CCTP FAST TRANSFER (MAINNET PATTERN) ====================
-    
-    /**
-     * @dev Fast transfer function following proven mainnet pattern
-     * Matches the successful sendFast interface from mainnet logs
-     */
-    function sendFast(
-        uint256 amount,
-        uint32 destinationDomain, 
-        bytes32 mintRecipient,
-        uint256 maxFee
-    ) external returns (uint64) {
-        require(amount > 0, "Amount must be greater than 0");
-        require(usdcToken.balanceOf(msg.sender) >= amount, "Insufficient USDC balance");
-        require(usdcToken.allowance(msg.sender, address(this)) >= amount, "Insufficient USDC allowance");
-        
-        // Transfer USDC from sender to this contract
-        usdcToken.transferFrom(msg.sender, address(this), amount);
-        
-        // Approve TokenMessenger to burn USDC
-        usdcToken.approve(address(tokenMessenger), amount);
-        
-        // Execute CCTP depositForBurn (proven working pattern)
-        uint64 nonce = tokenMessenger.depositForBurn(
-            amount,
-            destinationDomain,
-            mintRecipient,
-            address(usdcToken)
-        );
-        
-        return nonce;
-    }
 
 function upgradeFromDAO(address newImplementation) external {
     require(msg.sender == address(bridge), "Only bridge can upgrade");
@@ -228,28 +175,30 @@ function upgradeFromDAO(address newImplementation) external {
         emit BridgeSet(_bridge);
     }
     
+    function setCCTPSender(address _cctpSender) external onlyOwner {
+        require(_cctpSender != address(0), "CCTP sender address cannot be zero");
+        cctpSender = _cctpSender;
+    }
+    
+    function sendFunds(string memory _jobId, uint256 _amount) internal {
+        require(cctpSender != address(0), "CCTP sender not set");
+        
+        // Transfer USDC from user to this contract, then approve CCTP sender
+        usdtToken.safeTransferFrom(msg.sender, address(this), _amount);
+        usdtToken.approve(cctpSender, _amount);
+        
+        // Call CCTP v2 transceiver sendFast function
+        // Domain 2 = OP Sepolia, mintRecipient = CCTP receiver on OP Sepolia
+        bytes32 mintRecipient = bytes32(uint256(uint160(0xDa3cD34e254b3967d9568D2AA99F587B3E9B552d)));
+        (bool success, ) = cctpSender.call(abi.encodeWithSignature("sendFast(uint256,uint32,bytes32,uint256)", _amount, 2, mintRecipient, 1000));
+        require(success, "CCTP sender call failed");
+        
+        emit FundsSent(_jobId, msg.sender, _amount);
+    }
+    
     function setAthenaClientContract(address _athenaClient) external onlyOwner {
         require(_athenaClient != address(0), "Athena client address cannot be zero");
         athenaClientContract = _athenaClient;
-    }
-    
-    function setTokenMessenger(address _tokenMessenger) external onlyOwner {
-        require(_tokenMessenger != address(0), "Token messenger cannot be zero");
-        tokenMessenger = ITokenMessenger(_tokenMessenger);
-    }
-    
-    function setMessageTransmitter(address _messageTransmitter) external onlyOwner {
-        require(_messageTransmitter != address(0), "Message transmitter cannot be zero");
-        messageTransmitter = IMessageTransmitter(_messageTransmitter);
-    }
-    
-    function setNativeChainRecipient(address _recipient) external onlyOwner {
-        require(_recipient != address(0), "Recipient cannot be zero");
-        nativeChainRecipient = _recipient;
-    }
-    
-    function setNativeDomain(uint32 _nativeDomain) external onlyOwner {
-        nativeDomain = _nativeDomain;
     }
     
     // ==================== PROFILE MANAGEMENT ====================
@@ -377,7 +326,7 @@ function upgradeFromDAO(address newImplementation) external {
         return jobApplications[_jobId][_appId];
     }
     
-    // ==================== JOB STARTUP WITH CCTP ====================
+    // ==================== JOB STARTUP ====================
     
     function startJob(
         string memory _jobId, 
@@ -406,38 +355,16 @@ function upgradeFromDAO(address newImplementation) external {
         }
         
         uint256 firstAmount = job.finalMilestones[0].amount;
-        
-        // Send USDC via CCTP to native chain for escrow  
-        require(usdcToken.balanceOf(msg.sender) >= firstAmount, "Insufficient USDC balance");
-        require(usdcToken.allowance(msg.sender, address(this)) >= firstAmount, "Insufficient USDC allowance for contract");
-        
-        // Use CCTP Fast Transfer following proven mainnet pattern
-        // Transfer USDC from job giver to this contract first
-        usdcToken.transferFrom(msg.sender, address(this), firstAmount);
-        
-        // Approve TokenMessenger to burn USDC
-        usdcToken.approve(address(tokenMessenger), firstAmount);
-        
-        // Execute CCTP Fast Transfer (proven working pattern)
-        bytes32 recipient = bytes32(uint256(uint160(nativeChainRecipient)));
-        uint64 cctpNonce = tokenMessenger.depositForBurn(
-            firstAmount,
-            nativeDomain,
-            recipient,
-            address(usdcToken)
-        );
-        
+        sendFunds(_jobId, firstAmount);
         job.currentLockedAmount = firstAmount;
         job.totalEscrowed += firstAmount;
         
-        // Send job state to native chain
+        // Send to native chain
         bytes memory payload = abi.encode("startJob", msg.sender, _jobId, _appId, _useAppMilestones);
         bridge.sendToNativeChain{value: msg.value}("startJob", payload, _nativeOptions);
         
         emit JobStarted(_jobId, _appId, app.applicant, _useAppMilestones);
         emit JobStatusChanged(_jobId, JobStatus.InProgress);
-        emit USDCEscrowed(_jobId, msg.sender, firstAmount);
-        emit CCTPPaymentSent(_jobId, cctpNonce, firstAmount, 1, "startJob");
     }
     
     function submitWork(
@@ -459,7 +386,7 @@ function upgradeFromDAO(address newImplementation) external {
         emit WorkSubmitted(_jobId, msg.sender, _submissionHash, jobs[_jobId].currentMilestone);
     }
     
-    // ==================== PAYMENT FUNCTIONS (STATE ONLY) ====================
+    // ==================== PAYMENT FUNCTIONS ====================
     
     function releasePayment(
         string memory _jobId,
@@ -475,7 +402,6 @@ function upgradeFromDAO(address newImplementation) external {
         
         uint256 amount = job.currentLockedAmount;
         
-        // Update local state (no actual USDC transfer here)
         job.totalPaid += amount;
         job.totalReleased += amount;
         job.currentLockedAmount = 0;
@@ -488,7 +414,7 @@ function upgradeFromDAO(address newImplementation) external {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Send release request to native chain (actual USDC transfer happens there)
+        // Send to native chain only
         bytes memory nativePayload = abi.encode("releasePayment", msg.sender, _jobId, amount);
         bridge.sendToNativeChain{value: msg.value}("releasePayment", nativePayload, _nativeOptions);
         
@@ -510,35 +436,16 @@ function upgradeFromDAO(address newImplementation) external {
         job.currentMilestone += 1;
         uint256 nextAmount = job.finalMilestones[job.currentMilestone - 1].amount;
         
-        // Send USDC via CCTP to native chain for next milestone
-        require(usdcToken.balanceOf(msg.sender) >= nextAmount, "Insufficient USDC balance");
-        require(usdcToken.allowance(msg.sender, address(tokenMessenger)) >= nextAmount, "Insufficient USDC allowance");
-        
-        // Transfer USDC from job giver to this contract
-        usdcToken.transferFrom(msg.sender, address(this), nextAmount);
-        
-        // Approve TokenMessenger to burn USDC
-        usdcToken.approve(address(tokenMessenger), nextAmount);
-        
-        // Burn USDC and send via CCTP to native chain escrow
-        bytes32 recipient = bytes32(uint256(uint160(nativeChainRecipient)));
-        uint64 cctpNonce = tokenMessenger.depositForBurn(
-            nextAmount,
-            nativeDomain,
-            recipient,
-            address(usdcToken)
-        );
+        sendFunds(_jobId, nextAmount);
         
         job.currentLockedAmount = nextAmount;
         job.totalEscrowed += nextAmount;
         
-        // Send state update to native chain
+        // Send to native chain
         bytes memory payload = abi.encode("lockNextMilestone", msg.sender, _jobId, nextAmount);
         bridge.sendToNativeChain{value: msg.value}("lockNextMilestone", payload, _nativeOptions);
         
         emit MilestoneLocked(_jobId, job.currentMilestone, nextAmount);
-        emit USDCEscrowed(_jobId, msg.sender, nextAmount);
-        emit CCTPPaymentSent(_jobId, cctpNonce, nextAmount, job.currentMilestone, "lockMilestone");
     }
     
     function releaseAndLockNext(
@@ -555,38 +462,19 @@ function upgradeFromDAO(address newImplementation) external {
         
         uint256 releaseAmount = job.currentLockedAmount;
         
-        // Update local state for released payment
         job.totalPaid += releaseAmount;
         job.totalReleased += releaseAmount;
+        
+        // Update local platform total
         totalPlatformPayments += releaseAmount;
         
         job.currentMilestone += 1;
         
         uint256 nextAmount = 0;
-        uint64 cctpNonce = 0;
-        
         if (job.currentMilestone <= job.finalMilestones.length) {
             nextAmount = job.finalMilestones[job.currentMilestone - 1].amount;
             
-            // Send USDC via CCTP for next milestone
-            require(usdcToken.balanceOf(msg.sender) >= nextAmount, "Insufficient USDC balance");
-            require(usdcToken.allowance(msg.sender, address(tokenMessenger)) >= nextAmount, "Insufficient USDC allowance");
-            
-            // Transfer USDC from job giver to this contract
-            usdcToken.transferFrom(msg.sender, address(this), nextAmount);
-            
-            // Approve TokenMessenger to burn USDC
-            usdcToken.approve(address(tokenMessenger), nextAmount);
-            
-            // Burn USDC and send via CCTP to native chain escrow
-            bytes32 recipient = bytes32(uint256(uint160(nativeChainRecipient)));
-            cctpNonce = tokenMessenger.depositForBurn(
-                nextAmount,
-                nativeDomain,
-                recipient,
-                address(usdcToken)
-            );
-            
+            sendFunds(_jobId, nextAmount);
             job.currentLockedAmount = nextAmount;
             job.totalEscrowed += nextAmount;
         } else {
@@ -595,17 +483,12 @@ function upgradeFromDAO(address newImplementation) external {
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Send combined request to native chain
+        // Send to native chain only
         bytes memory nativePayload = abi.encode("releasePaymentAndLockNext", msg.sender, _jobId, releaseAmount, nextAmount);
         bridge.sendToNativeChain{value: msg.value}("releaseAndLockNext", nativePayload, _nativeOptions);
         
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, releaseAmount, nextAmount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
-        
-        if (nextAmount > 0) {
-            emit USDCEscrowed(_jobId, msg.sender, nextAmount);
-            emit CCTPPaymentSent(_jobId, cctpNonce, nextAmount, job.currentMilestone, "lockMilestone");
-        }
     }
     
     // ==================== RATING SYSTEM ====================
@@ -678,10 +561,10 @@ function upgradeFromDAO(address newImplementation) external {
         uint256 amount = job.currentLockedAmount;
         
         if (_jobGiverWins) {
-            // Job giver wins - native chain will refund the escrowed amount
+            // Job giver wins - funds remain with receiver contract (no action needed)
             winner = job.jobGiver;
         } else {
-            // Job taker wins - native chain will release payment to them
+            // Job taker wins - funds will be released by receiver contract
             winner = job.selectedApplicant;
             
             // Update platform totals since this counts as a payment
@@ -736,10 +619,10 @@ function upgradeFromDAO(address newImplementation) external {
         payable(owner()).transfer(balance);
     }
     
-    function emergencyWithdrawUSDC() external onlyOwner {
-        uint256 balance = usdcToken.balanceOf(address(this));
-        require(balance > 0, "No USDC balance to withdraw");
-        usdcToken.transfer(owner(), balance);
+    function emergencyWithdrawUSDT() external onlyOwner {
+        uint256 balance = usdtToken.balanceOf(address(this));
+        require(balance > 0, "No USDT balance to withdraw");
+        usdtToken.safeTransfer(owner(), balance);
     }
 
 }

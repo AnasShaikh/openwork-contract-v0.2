@@ -27,7 +27,7 @@ interface INativeOpenWorkJobContract {
     function createProfile(address user, string memory ipfsHash, address referrer) external;
     function postJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external;
     function applyToJob(address applicant, string memory jobId, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external;
-    function startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external;
+    function startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones, uint256 amount) external;
     function submitWork(address applicant, string memory jobId, string memory submissionHash) external;
     function releasePayment(address jobGiver, string memory jobId, uint256 amount) external;
     function lockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) external;
@@ -76,17 +76,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     // Chain endpoints - simplified to 2 types
     uint32 public mainChainEid;        // Main/Rewards chain (single)
     
-    // ==================== CCTP INTEGRATION ====================
-    
-    // Payment confirmation tracking
-    mapping(string => uint256) public pendingPaymentReleases; // jobId => amount pending release
-    mapping(string => address) public paymentReleaseRecipients; // jobId => recipient address
-    mapping(string => bool) public paymentConfirmationSent; // jobId => confirmation sent flag
-    
-    // CCTP status tracking
-    mapping(string => uint64) public jobCCTPNonces; // jobId => latest received CCTP nonce
-    mapping(uint64 => string) public cctpNonceToJob; // CCTP nonce => jobId
-    
     // Events
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
     event CrossChainMessageReceived(string indexed functionName, uint32 indexed sourceChain, bytes data);
@@ -96,12 +85,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     event UpgradeExecuted(address indexed targetProxy, address indexed newImplementation, uint32 indexed sourceChain);
     event LocalChainAdded(uint32 indexed localChainEid);
     event LocalChainRemoved(uint32 indexed localChainEid);
-    
-    // ==================== NEW CCTP EVENTS ====================
-    event PaymentReleaseRequested(string indexed jobId, address indexed recipient, uint256 amount, uint32 indexed sourceChain);
-    event PaymentConfirmationSent(string indexed jobId, uint32 indexed targetChain, string confirmationType);
-    event CCTPPaymentReceived(string indexed jobId, uint64 cctpNonce, uint256 amount, string paymentType);
-    event PaymentProcessed(string indexed jobId, address indexed recipient, uint256 amount, string processType);
     
     modifier onlyAuthorized() {
         require(authorizedContracts[msg.sender], "Not authorized to use bridge");
@@ -186,96 +169,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         return eid;
     }
     
-    // ==================== CCTP PAYMENT CONFIRMATION FUNCTIONS ====================
-    
-    /**
-     * @dev Send payment locked confirmation to local chain
-     */
-    function sendPaymentLockedConfirmation(
-        string memory _jobId,
-        uint256 _amount,
-        uint256 _milestone,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        uint32 targetEid = extractEidFromJobId(_jobId);
-        require(authorizedLocalChains[targetEid], "Local chain not authorized");
-        
-        bytes memory payload = abi.encode(
-            "confirmPaymentLocked",
-            _jobId,
-            _amount,
-            _milestone
-        );
-        
-        _lzSend(
-            targetEid,
-            payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        paymentConfirmationSent[_jobId] = true;
-        emit PaymentConfirmationSent(_jobId, targetEid, "paymentLocked");
-        emit CrossChainMessageSent("confirmPaymentLocked", targetEid, payload);
-    }
-    
-    /**
-     * @dev Send payment released confirmation to local chain
-     */
-    function sendPaymentReleasedConfirmation(
-        string memory _jobId,
-        uint256 _amount,
-        address _recipient,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        uint32 targetEid = extractEidFromJobId(_jobId);
-        require(authorizedLocalChains[targetEid], "Local chain not authorized");
-        
-        bytes memory payload = abi.encode(
-            "confirmPaymentReleased",
-            _jobId,
-            _amount,
-            _recipient
-        );
-        
-        _lzSend(
-            targetEid,
-            payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        // Clear pending release
-        pendingPaymentReleases[_jobId] = 0;
-        paymentReleaseRecipients[_jobId] = address(0);
-        
-        emit PaymentConfirmationSent(_jobId, targetEid, "paymentReleased");
-        emit CrossChainMessageSent("confirmPaymentReleased", targetEid, payload);
-    }
-    
-    /**
-     * @dev Notify NOWJC of CCTP payment received (called by CCTP hook or admin)
-     */
-    function notifyCCTPPaymentReceived(
-        string memory _jobId,
-        uint64 _cctpNonce,
-        uint256 _amount,
-        string memory _paymentType
-    ) external onlyAuthorized {
-        require(nativeOpenWorkJobContract != address(0), "NOWJC contract not set");
-        
-        // Track the CCTP payment
-        jobCCTPNonces[_jobId] = _cctpNonce;
-        cctpNonceToJob[_cctpNonce] = _jobId;
-        
-        emit CCTPPaymentReceived(_jobId, _cctpNonce, _amount, _paymentType);
-        
-        // Could trigger auto-confirmation to local chain if needed
-        // For now, admin/NOWJC contract handles confirmations manually
-    }
-    
     // ==================== UPGRADE FUNCTIONALITY ====================
     
     function handleUpgradeContract(address targetProxy, address newImplementation) external onlyMainChain {
@@ -347,55 +240,28 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).applyToJob(applicant, jobId, applicationHash, descriptions, amounts);
         } else if (keccak256(bytes(functionName)) == keccak256(bytes("startJob"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) = abi.decode(_message, (string, address, string, uint256, bool));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).startJob(jobGiver, jobId, applicationId, useApplicantMilestones);
+            // Updated to decode the amount parameter for CCTP integration
+            (, address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones, uint256 amount) = 
+                abi.decode(_message, (string, address, string, uint256, bool, uint256));
+            // Pass the amount to the nowjc contract
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).startJob(jobGiver, jobId, applicationId, useApplicantMilestones, amount);
         } else if (keccak256(bytes(functionName)) == keccak256(bytes("submitWork"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address applicant, string memory jobId, string memory submissionHash) = abi.decode(_message, (string, address, string, string));
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).submitWork(applicant, jobId, submissionHash);
-        } 
-        
-        // ==================== PAYMENT RELEASE HANDLING ====================
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePayment"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            require(authorizedLocalChains[_origin.srcEid], "Request must come from authorized local chain");
-            
             (, address jobGiver, string memory jobId, uint256 amount) = abi.decode(_message, (string, address, string, uint256));
-            
-            // Store payment release request
-            pendingPaymentReleases[jobId] = amount;
-            // paymentReleaseRecipients will be set by NOWJC when it processes the release
-            
-            // Forward to NOWJC for actual USDC transfer
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePayment(jobGiver, jobId, amount);
-            
-            emit PaymentReleaseRequested(jobId, address(0), amount, _origin.srcEid); // recipient TBD
-        } 
-        
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("lockNextMilestone"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address caller, string memory jobId, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256));
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).lockNextMilestone(caller, jobId, lockedAmount);
-        } 
-        
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentAndLockNext"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
-            require(authorizedLocalChains[_origin.srcEid], "Request must come from authorized local chain");
-            
             (, address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) = abi.decode(_message, (string, address, string, uint256, uint256));
-            
-            // Store payment release request
-            if (releasedAmount > 0) {
-                pendingPaymentReleases[jobId] = releasedAmount;
-            }
-            
-            // Forward to NOWJC for processing
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePaymentAndLockNext(jobGiver, jobId, releasedAmount, lockedAmount);
-            
-            emit PaymentReleaseRequested(jobId, address(0), releasedAmount, _origin.srcEid); // recipient TBD
-        } 
-        
-        else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
+        } else if (keccak256(bytes(functionName)) == keccak256(bytes("rate"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address rater, string memory jobId, address userToRate, uint256 rating) = abi.decode(_message, (string, address, string, address, uint256));
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).rate(rater, jobId, userToRate, rating);
@@ -501,28 +367,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent("syncVotingPower", mainChainEid, payload);
     }
     
-    // ==================== PAYMENT PROCESSING NOTIFICATION ====================
-    
-    /**
-     * @dev Called by NOWJC after processing payment release
-     */
-    function notifyPaymentProcessed(
-        string memory _jobId,
-        address _recipient,
-        uint256 _amount,
-        string memory _processType
-    ) external {
-        require(msg.sender == nativeOpenWorkJobContract, "Only NOWJC can notify payment processed");
-        
-        // Update recipient tracking
-        paymentReleaseRecipients[_jobId] = _recipient;
-        
-        emit PaymentProcessed(_jobId, _recipient, _amount, _processType);
-        
-        // Auto-send confirmation to local chain if enabled
-        // For now, this is handled manually by admin or through separate calls
-    }
-    
     // ==================== QUOTE FUNCTIONS ====================
 
     function quoteSyncVotingPower(
@@ -572,24 +416,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         MessagingFee memory msgFee = _quote(mainChainEid, _payload, _options, false);
         return msgFee.nativeFee;
     }
-    
-    function quotePaymentConfirmation(
-        string memory _jobId,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        uint32 targetEid = extractEidFromJobId(_jobId);
-        require(authorizedLocalChains[targetEid], "Local chain not authorized");
-        
-        bytes memory payload = abi.encode(
-            "confirmPaymentReleased",
-            _jobId,
-            uint256(100000), // sample amount for quote
-            address(0x1234567890123456789012345678901234567890) // sample address for quote
-        );
-        
-        MessagingFee memory msgFee = _quote(targetEid, payload, _options, false);
-        return msgFee.nativeFee;
-    }
         
     function quoteThreeChains(
         uint32 _dstEid1,
@@ -610,25 +436,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         fee2 = msgFee2.nativeFee;
         fee3 = msgFee3.nativeFee;
         totalFee = fee1 + fee2 + fee3;
-    }
-    
-    // ==================== VIEW FUNCTIONS ====================
-    
-    function getPendingPaymentRelease(string memory _jobId) external view returns (uint256 amount, address recipient) {
-        amount = pendingPaymentReleases[_jobId];
-        recipient = paymentReleaseRecipients[_jobId];
-    }
-    
-    function getJobCCTPNonce(string memory _jobId) external view returns (uint64) {
-        return jobCCTPNonces[_jobId];
-    }
-    
-    function getJobFromCCTPNonce(uint64 _nonce) external view returns (string memory) {
-        return cctpNonceToJob[_nonce];
-    }
-    
-    function isPaymentConfirmationSent(string memory _jobId) external view returns (bool) {
-        return paymentConfirmationSent[_jobId];
     }
     
     // ==================== ADMIN FUNCTIONS ====================
@@ -656,56 +463,6 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
     function updateMainChainEid(uint32 _mainChainEid) external onlyOwner {
         mainChainEid = _mainChainEid;
         emit ChainEndpointUpdated("main", _mainChainEid);
-    }
-    
-    // ==================== PAYMENT ADMIN FUNCTIONS ====================
-    
-    /**
-     * @dev Manually clear pending payment release (admin emergency function)
-     */
-    function clearPendingPaymentRelease(string memory _jobId) external onlyOwner {
-        pendingPaymentReleases[_jobId] = 0;
-        paymentReleaseRecipients[_jobId] = address(0);
-        paymentConfirmationSent[_jobId] = false;
-    }
-    
-    /**
-     * @dev Manually set payment confirmation status (admin function)
-     */
-    function setPaymentConfirmationSent(string memory _jobId, bool _sent) external onlyOwner {
-        paymentConfirmationSent[_jobId] = _sent;
-    }
-    
-    /**
-     * @dev Emergency function to send payment confirmation
-     */
-    function emergencySendPaymentConfirmation(
-        string memory _jobId,
-        uint256 _amount,
-        address _recipient,
-        string memory _confirmationType,
-        bytes calldata _options
-    ) external payable onlyOwner {
-        uint32 targetEid = extractEidFromJobId(_jobId);
-        require(authorizedLocalChains[targetEid], "Local chain not authorized");
-        
-        bytes memory payload;
-        if (keccak256(bytes(_confirmationType)) == keccak256("paymentLocked")) {
-            payload = abi.encode("confirmPaymentLocked", _jobId, _amount, uint256(1)); // default milestone 1
-        } else {
-            payload = abi.encode("confirmPaymentReleased", _jobId, _amount, _recipient);
-        }
-        
-        _lzSend(
-            targetEid,
-            payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit PaymentConfirmationSent(_jobId, targetEid, _confirmationType);
-        emit CrossChainMessageSent(_confirmationType, targetEid, payload);
     }
     
     function withdraw() external onlyOwner {

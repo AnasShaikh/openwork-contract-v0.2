@@ -127,21 +127,12 @@ interface INativeBridge {
     ) external payable;
 }
 
-// Interface for CCTP Escrow Manager
-interface ICCTPEscrowManager {
-    function releasePayment(string memory jobId, uint256 amount) external;
-    function releasePaymentAndLockNext(string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external;
-    function resolveDispute(string memory jobId, bool jobGiverWins) external;
-    function getJobEscrowBalance(string memory jobId) external view returns (uint256 escrowed, uint256 released, uint256 currentLocked);
-}
-
 contract NativeOpenWorkJobContract is 
     Initializable,
     OwnableUpgradeable,
     UUPSUpgradeable
 {
     using SafeERC20 for IERC20;
-    
     enum JobStatus {
         Open,
         InProgress,
@@ -197,12 +188,10 @@ contract NativeOpenWorkJobContract is
     address[] private allProfileUsers;
     uint256 private profileCount;
     mapping(address => bool) public authorizedContracts;
-
-    // CCTP Escrow Manager reference
-    ICCTPEscrowManager public cctpEscrowManager;
     
-    // Job worker mapping for escrow integration
-    mapping(string => address) public jobWorker; // jobId => selected worker address
+    // USDT token and CCTP receiver
+    IERC20 public usdtToken;
+    address public cctpReceiver;
 
     // ==================== EVENTS ====================
     
@@ -226,7 +215,6 @@ contract NativeOpenWorkJobContract is
     event RewardsDataSynced(address indexed user, uint256 syncType, uint256 claimableAmount, uint256 reserved);   
     event AuthorizedContractAdded(address indexed contractAddress);
     event AuthorizedContractRemoved(address indexed contractAddress);
-    event CCTPEscrowManagerUpdated(address indexed oldManager, address indexed newManager);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -238,7 +226,8 @@ contract NativeOpenWorkJobContract is
         address _bridge, 
         address _genesis,
         address _rewardsContract,
-        address _cctpEscrowManager
+        address _usdtToken,
+        address _cctpReceiver
     ) public initializer {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
@@ -246,11 +235,10 @@ contract NativeOpenWorkJobContract is
         bridge = _bridge;
         genesis = IOpenworkGenesis(_genesis);
         rewardsContract = IOpenWorkRewards(_rewardsContract);
-        cctpEscrowManager = ICCTPEscrowManager(_cctpEscrowManager);
+        usdtToken = IERC20(_usdtToken);
+        cctpReceiver = _cctpReceiver;
     }
 
-    // ==================== ADMIN FUNCTIONS ====================
-    
     function addAuthorizedContract(address contractAddress) external onlyOwner {
         require(contractAddress != address(0), "Invalid contract address");
         authorizedContracts[contractAddress] = true;
@@ -266,13 +254,6 @@ contract NativeOpenWorkJobContract is
         return authorizedContracts[contractAddress];
     }
 
-    function setCCTPEscrowManager(address _cctpEscrowManager) external onlyOwner {
-        require(_cctpEscrowManager != address(0), "Invalid address");
-        address oldManager = address(cctpEscrowManager);
-        cctpEscrowManager = ICCTPEscrowManager(_cctpEscrowManager);
-        emit CCTPEscrowManagerUpdated(oldManager, _cctpEscrowManager);
-    }
-
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
         require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
     }
@@ -281,6 +262,8 @@ contract NativeOpenWorkJobContract is
         require(msg.sender == address(bridge), "Only bridge can upgrade");
         upgradeToAndCall(newImplementation, "");
     }
+    
+    // ==================== ADMIN FUNCTIONS ====================
     
     function setBridge(address _bridge) external onlyOwner {
         address oldBridge = bridge;
@@ -299,31 +282,24 @@ contract NativeOpenWorkJobContract is
         rewardsContract = IOpenWorkRewards(_rewardsContract);
         emit RewardsContractUpdated(oldRewards, _rewardsContract);
     }
-
-    // ==================== CCTP ESCROW INTEGRATION ====================
     
-    /**
-     * @dev Called by CCTP escrow manager when funds are received
-     */
-    function notifyEscrowReceived(string memory jobId, address sender, uint256 amount, uint256 milestone) external {
-        require(msg.sender == address(cctpEscrowManager), "Only CCTP escrow manager can call");
-        // Additional logic can be added here if needed
+    function setCCTPReceiver(address _cctpReceiver) external onlyOwner {
+        require(_cctpReceiver != address(0), "CCTP receiver address cannot be zero");
+        cctpReceiver = _cctpReceiver;
     }
     
-    /**
-     * @dev Called by CCTP escrow manager when payment is released
-     */
-    function updateJobPaidAmount(string memory jobId, uint256 amount) external {
-        require(msg.sender == address(cctpEscrowManager), "Only CCTP escrow manager can call");
+    function withdrawFunds(address _to, uint256 _amount) internal {
+        require(cctpReceiver != address(0), "CCTP receiver not set");
+        require(_to != address(0), "Invalid recipient");
+        require(_amount > 0, "Amount must be greater than zero");
         
-        // Update job total paid in Genesis
-        genesis.updateJobTotalPaid(jobId, amount);
-
-        // Delegate to RewardsContract for token calculation and distribution
-        _processRewardsForPayment(genesis.getJob(jobId).jobGiver, jobId, amount);
+        // Call CCTP receiver to withdraw funds
+        (bool success, ) = cctpReceiver.call(abi.encodeWithSignature("withdrawFunds(address,uint256)", _to, _amount));
+        require(success, "CCTP receiver withdrawal failed");
     }
 
     // ==================== MESSAGE HANDLERS ====================
+
 
     function handleUpdateUserClaimData(
     address user, 
@@ -367,76 +343,6 @@ contract NativeOpenWorkJobContract is
         
         uint256 newTotal = genesis.getUserGovernanceActions(user);
         emit GovernanceActionIncremented(user, newTotal, currentBand);
-    }
-
-    // ==================== PAYMENT RELEASE FUNCTIONS (DELEGATE TO CCTP ESCROW) ====================
-    
-    /**
-     * @dev Release payment to worker (called by bridge from local chain request)
-     */
-    function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external {
-        require(msg.sender == bridge, "Only bridge can call this function");
-        require(jobWorker[_jobId] != address(0), "No worker assigned");
-        
-        // Delegate to CCTP escrow manager
-        if (address(cctpEscrowManager) != address(0)) {
-            cctpEscrowManager.releasePayment(_jobId, _amount);
-        }
-        
-        // Check if job should be completed
-        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
-        if (job.currentMilestone == job.finalMilestones.length) {
-            genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
-            emit JobStatusChanged(_jobId, JobStatus.Completed);
-        }
-        
-        emit PaymentReleased(_jobId, _jobGiver, jobWorker[_jobId], _amount, job.currentMilestone);
-    }
-    
-    /**
-     * @dev Release payment and prepare for next milestone
-     */
-    function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external {
-        require(msg.sender == bridge, "Only bridge can call this function");
-        require(jobWorker[_jobId] != address(0), "No worker assigned");
-        
-        // Delegate to CCTP escrow manager
-        if (address(cctpEscrowManager) != address(0)) {
-            cctpEscrowManager.releasePaymentAndLockNext(_jobId, _releasedAmount, _lockedAmount);
-        }
-        
-        // Update milestone in Genesis
-        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
-        genesis.setJobCurrentMilestone(_jobId, job.currentMilestone + 1);
-        
-        job = genesis.getJob(_jobId); // Re-fetch updated job
-        if (job.currentMilestone > job.finalMilestones.length) {
-            genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
-            emit JobStatusChanged(_jobId, JobStatus.Completed);
-        }
-        
-        emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, job.currentMilestone);
-    }
-
-    // ==================== DISPUTE RESOLUTION ====================
-    
-    /**
-     * @dev Resolve dispute by releasing funds to winner
-     */
-    function resolveDispute(string memory _jobId, bool _jobGiverWins) external {
-        // Only allow Athena Client contract to call this
-        require(authorizedContracts[msg.sender], "Only authorized contracts can resolve disputes");
-        
-        require(genesis.jobExists(_jobId), "Job does not exist");
-        
-        // Delegate to CCTP escrow manager
-        if (address(cctpEscrowManager) != address(0)) {
-            cctpEscrowManager.resolveDispute(_jobId, _jobGiverWins);
-        }
-        
-        // Mark job as completed
-        genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
-        emit JobStatusChanged(_jobId, JobStatus.Completed);
     }
 
     // ==================== INTERNAL REWARD PROCESSING ====================
@@ -660,9 +566,6 @@ contract NativeOpenWorkJobContract is
         genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.InProgress);
         genesis.setJobCurrentMilestone(_jobId, 1);
         
-        // Set the worker for escrow tracking
-        jobWorker[_jobId] = application.applicant;
-        
         if (_useApplicantMilestones) {
             for (uint i = 0; i < application.proposedMilestones.length; i++) {
                 genesis.addJobFinalMilestone(_jobId, application.proposedMilestones[i].descriptionHash, application.proposedMilestones[i].amount);
@@ -695,12 +598,62 @@ contract NativeOpenWorkJobContract is
         emit WorkSubmitted(_jobId, _applicant, _submissionHash, job.currentMilestone);
     }
     
+    function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
+        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+        require(job.selectedApplicant != address(0), "No applicant selected");
+        
+        // Withdraw funds from CCTP receiver and transfer to job taker
+        withdrawFunds(job.selectedApplicant, _amount);
+        
+        // Update job total paid in Genesis
+        genesis.updateJobTotalPaid(_jobId, _amount);
+
+        // Delegate to RewardsContract for token calculation and distribution
+        _processRewardsForPayment(_jobGiver, _jobId, _amount);
+        
+        // Check if job should be completed
+        if (job.currentMilestone == job.finalMilestones.length) {
+            genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
+            emit JobStatusChanged(_jobId, JobStatus.Completed);
+        }
+        
+        emit PaymentReleased(_jobId, _jobGiver, job.selectedApplicant, _amount, job.currentMilestone);
+    }
+    
     function lockNextMilestone(address /* _caller */, string memory _jobId, uint256 _lockedAmount) external {
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         require(job.currentMilestone < job.finalMilestones.length, "All milestones already completed");
         
         genesis.setJobCurrentMilestone(_jobId, job.currentMilestone + 1);
         emit MilestoneLocked(_jobId, job.currentMilestone + 1, _lockedAmount);
+    }
+    
+    function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external {
+        require(msg.sender == bridge, "Only bridge can call this function");
+        
+        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+        require(job.selectedApplicant != address(0), "No applicant selected");
+        
+        // Withdraw funds from CCTP receiver and transfer to job taker
+        withdrawFunds(job.selectedApplicant, _releasedAmount);
+        
+        // Update job total paid in Genesis
+        genesis.updateJobTotalPaid(_jobId, _releasedAmount);
+
+        // Delegate to RewardsContract for token calculation and distribution
+        _processRewardsForPayment(_jobGiver, _jobId, _releasedAmount);
+        
+        genesis.setJobCurrentMilestone(_jobId, job.currentMilestone + 1);
+        
+        job = genesis.getJob(_jobId); // Re-fetch updated job
+        if (job.currentMilestone > job.finalMilestones.length) {
+            genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
+            emit JobStatusChanged(_jobId, JobStatus.Completed);
+        }
+        
+        emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, job.currentMilestone);
     }
     
     function rate(address _rater, string memory _jobId, address _userToRate, uint256 _rating) external {
@@ -761,9 +714,11 @@ contract NativeOpenWorkJobContract is
     
     // ==================== VIEW FUNCTIONS ====================
     
+    // Add these to the VIEW FUNCTIONS section
+    
     function getProfileCount() external view returns (uint256) {
-        return profileCount;
-    }
+            return profileCount;
+        }
 
     function getProfileByIndex(uint256 _index) external view returns (Profile memory) {
         require(_index < profileCount, "Index out of bounds");
@@ -780,7 +735,6 @@ contract NativeOpenWorkJobContract is
     function getAllProfileUsers() external view returns (address[] memory) {
         return allProfileUsers;
     }
-    
     function getJobCount() external view returns (uint256) {
         return genesis.getJobCount();
     }
@@ -819,31 +773,14 @@ contract NativeOpenWorkJobContract is
         return genesis.totalPlatformPayments();
     }
     
-    // ==================== ESCROW VIEW FUNCTIONS (DELEGATE TO CCTP ESCROW) ====================
-    
-    function getJobEscrowBalance(string memory _jobId) external view returns (uint256 escrowed, uint256 released, uint256 currentLocked) {
-        if (address(cctpEscrowManager) != address(0)) {
-            return cctpEscrowManager.getJobEscrowBalance(_jobId);
-        }
-        return (0, 0, 0);
+    function emergencyWithdrawUSDT() external onlyOwner {
+        uint256 balance = usdtToken.balanceOf(address(this));
+        require(balance > 0, "No USDT balance to withdraw");
+        usdtToken.safeTransfer(owner(), balance);
     }
     
-    function getJobWorker(string memory _jobId) external view returns (address) {
-        return jobWorker[_jobId];
+    function setUSDTToken(address _newToken) external onlyOwner {
+        require(_newToken != address(0), "Invalid token address");
+        usdtToken = IERC20(_newToken);
     }
-    
-    function getJobGiver(string memory _jobId) external view returns (address) {
-        return genesis.getJob(_jobId).jobGiver;
-    }
-
-    // ==================== EMERGENCY FUNCTIONS ====================
-    
-    function emergencyWithdrawETH() external onlyOwner {
-        uint256 balance = address(this).balance;
-        require(balance > 0, "No ETH balance to withdraw");
-        payable(owner()).transfer(balance);
-    }
-    
-    // Allow contract to receive ETH
-    receive() external payable {}
 }
