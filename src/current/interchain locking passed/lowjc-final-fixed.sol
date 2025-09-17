@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -47,8 +49,10 @@ interface ILayerZeroBridge {
 }
 
 contract CrossChainLocalOpenWorkJobContract is 
-    ReentrancyGuard,
-    Ownable
+    Initializable,
+    ReentrancyGuardUpgradeable,
+    OwnableUpgradeable,
+    UUPSUpgradeable
 {
     using SafeERC20 for IERC20;
     
@@ -90,10 +94,6 @@ contract CrossChainLocalOpenWorkJobContract is
         uint256 selectedApplicationId;
         uint256 totalEscrowed;
         uint256 totalReleased;
-        uint32 applierChainDomain;  // CCTP domain of applier's chain
-        address applierAddress;     // Address of selected applicant
-        uint32 posterChainDomain;   // CCTP domain of job poster's chain
-        address posterAddress;      // Address of job poster
     }
     
     // State variables
@@ -115,14 +115,6 @@ contract CrossChainLocalOpenWorkJobContract is
     ILayerZeroBridge public bridge;
     address public cctpSender;
     
-    // Chain ID to CCTP Domain mapping for cross-chain payments
-    mapping(uint256 => uint32) public chainIdToCCTPDomain;
-    
-    // Native chain configuration
-    uint32 public nativeChainDomain;  // CCTP domain of native chain (OP Sepolia = 2)
-    address public nativeChainReceiver; // CCTP receiver address on native chain
-    uint256 public defaultMaxFee;     // Default CCTP max fee for transfers
-    
     // Events
     event ProfileCreated(address indexed user, string ipfsHash, address referrer);
     event JobPosted(string indexed jobId, address indexed jobGiver, string jobDetailHash);
@@ -140,13 +132,22 @@ contract CrossChainLocalOpenWorkJobContract is
     event DisputeResolved(string indexed jobId, bool jobGiverWins, address winner, uint256 amount);
     event BridgeSet(address indexed bridge);
     
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+    
+    function initialize(
         address _owner, 
         address _usdtToken, 
         uint32 _chainId,
         address _bridge,
         address _cctpSender
-    ) Ownable(_owner) {
+    ) public initializer {
+        __ReentrancyGuard_init();
+        __Ownable_init(_owner);
+        __UUPSUpgradeable_init();
+        
         usdtToken = IERC20(_usdtToken);
         chainId = _chainId;
         bridge = ILayerZeroBridge(_bridge);
@@ -158,7 +159,14 @@ contract CrossChainLocalOpenWorkJobContract is
         usdtToken = IERC20(_newToken);
     }
     
-    
+function _authorizeUpgrade(address /* newImplementation */) internal view override {
+    require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
+}
+
+function upgradeFromDAO(address newImplementation) external {
+    require(msg.sender == address(bridge), "Only bridge can upgrade");
+    upgradeToAndCall(newImplementation, "");
+}    
     // ==================== ADMIN FUNCTIONS ====================
     
     function setBridge(address _bridge) external onlyOwner {
@@ -172,49 +180,17 @@ contract CrossChainLocalOpenWorkJobContract is
         cctpSender = _cctpSender;
     }
     
-    function setChainDomainMapping(uint256[] memory _chainIds, uint32[] memory _domains) external onlyOwner {
-        require(_chainIds.length == _domains.length, "Array lengths must match");
-        
-        for (uint i = 0; i < _chainIds.length; i++) {
-            chainIdToCCTPDomain[_chainIds[i]] = _domains[i];
-        }
-    }
-    
-    function setNativeChainConfig(
-        uint32 _nativeChainDomain,
-        address _nativeChainReceiver,
-        uint256 _defaultMaxFee
-    ) external onlyOwner {
-        require(_nativeChainDomain > 0, "Invalid native chain domain");
-        require(_nativeChainReceiver != address(0), "Invalid native chain receiver");
-        require(_defaultMaxFee > 0, "Invalid max fee");
-        
-        nativeChainDomain = _nativeChainDomain;
-        nativeChainReceiver = _nativeChainReceiver;
-        defaultMaxFee = _defaultMaxFee;
-    }
-    
     function sendFunds(string memory _jobId, uint256 _amount) internal {
         require(cctpSender != address(0), "CCTP sender not set");
-        require(nativeChainDomain > 0, "Native chain domain not configured");
-        require(nativeChainReceiver != address(0), "Native chain receiver not configured");
-        require(defaultMaxFee > 0, "Default max fee not configured");
         
         // Transfer USDC from user to this contract, then approve CCTP sender
         usdtToken.safeTransferFrom(msg.sender, address(this), _amount);
         usdtToken.approve(cctpSender, _amount);
         
-        // Call CCTP v2 transceiver sendFast function with configurable values
-        bytes32 mintRecipient = bytes32(uint256(uint160(nativeChainReceiver)));
-        (bool success, ) = cctpSender.call(
-            abi.encodeWithSignature(
-                "sendFast(uint256,uint32,bytes32,uint256)", 
-                _amount, 
-                nativeChainDomain, 
-                mintRecipient, 
-                defaultMaxFee
-            )
-        );
+        // Call CCTP v2 transceiver sendFast function
+        // Domain 3 = Arbitrum Sepolia, mintRecipient = CCTP receiver on Arbitrum Sepolia
+        bytes32 mintRecipient = bytes32(uint256(uint160(0xB64f20A20F55D77bbe708Db107AA5E53a9E39063)));
+        (bool success, ) = cctpSender.call(abi.encodeWithSignature("sendFast(uint256,uint32,bytes32,uint256)", _amount, 3, mintRecipient, 1000));
         require(success, "CCTP sender call failed");
         
         emit FundsSent(_jobId, msg.sender, _amount);
@@ -281,10 +257,6 @@ contract CrossChainLocalOpenWorkJobContract is
         newJob.jobDetailHash = _jobDetailHash;
         newJob.status = JobStatus.Open;
         
-        // Capture job poster's chain data
-        newJob.posterChainDomain = chainIdToCCTPDomain[block.chainid];
-        newJob.posterAddress = msg.sender;
-        
         for (uint i = 0; i < _descriptions.length; i++) {
             newJob.milestonePayments.push(MilestonePayment({
                 descriptionHash: _descriptions[i],
@@ -292,17 +264,8 @@ contract CrossChainLocalOpenWorkJobContract is
             }));
         }
         
-        // Send to native chain with poster chain data
-        bytes memory payload = abi.encode(
-            "postJob", 
-            jobId, 
-            msg.sender, 
-            _jobDetailHash, 
-            _descriptions, 
-            _amounts,
-            newJob.posterChainDomain,
-            newJob.posterAddress
-        );
+        // Send to native chain
+        bytes memory payload = abi.encode("postJob", jobId, msg.sender, _jobDetailHash, _descriptions, _amounts);
         bridge.sendToNativeChain{value: msg.value}("postJob", payload, _nativeOptions);
         
         emit JobPosted(jobId, msg.sender, _jobDetailHash);
@@ -385,10 +348,6 @@ contract CrossChainLocalOpenWorkJobContract is
         job.status = JobStatus.InProgress;
         job.currentMilestone = 1;
         
-        // Store applier chain data for cross-chain payment release
-        job.applierAddress = app.applicant;
-        job.applierChainDomain = chainIdToCCTPDomain[block.chainid];
-        
         MilestonePayment[] memory srcMilestones = _useAppMilestones ? app.proposedMilestones : job.milestonePayments;
         
         for (uint i = 0; i < srcMilestones.length; i++) {
@@ -401,15 +360,7 @@ contract CrossChainLocalOpenWorkJobContract is
         job.totalEscrowed += firstAmount;
         
         // Send to native chain
-        bytes memory payload = abi.encode(
-            "startJob", 
-            msg.sender, 
-            _jobId, 
-            _appId, 
-            _useAppMilestones,
-            job.posterChainDomain,
-            job.posterAddress
-        );
+        bytes memory payload = abi.encode("startJob", msg.sender, _jobId, _appId, _useAppMilestones);
         bridge.sendToNativeChain{value: msg.value}("startJob", payload, _nativeOptions);
         
         emit JobStarted(_jobId, _appId, app.applicant, _useAppMilestones);
@@ -463,18 +414,8 @@ contract CrossChainLocalOpenWorkJobContract is
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
         
-        // Send to native chain with applier and poster chain data for cross-chain release
-        bytes memory nativePayload = abi.encode(
-            "releasePayment", 
-            msg.sender, 
-            _jobId, 
-            amount,
-            job.applierAddress,
-            job.applierChainDomain,
-            job.currentMilestone,
-            job.posterChainDomain,
-            job.posterAddress
-        );
+        // Send to native chain only
+        bytes memory nativePayload = abi.encode("releasePayment", msg.sender, _jobId, amount);
         bridge.sendToNativeChain{value: msg.value}("releasePayment", nativePayload, _nativeOptions);
         
         emit PaymentReleased(_jobId, msg.sender, job.selectedApplicant, amount, job.currentMilestone);

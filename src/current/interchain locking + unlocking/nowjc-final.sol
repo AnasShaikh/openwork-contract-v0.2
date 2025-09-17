@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -128,9 +126,7 @@ interface INativeBridge {
 }
 
 contract NativeOpenWorkJobContract is 
-    Initializable,
-    OwnableUpgradeable,
-    UUPSUpgradeable
+    Ownable
 {
     using SafeERC20 for IERC20;
     enum JobStatus {
@@ -216,22 +212,14 @@ contract NativeOpenWorkJobContract is
     event AuthorizedContractAdded(address indexed contractAddress);
     event AuthorizedContractRemoved(address indexed contractAddress);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(
+    constructor(
         address _owner, 
         address _bridge, 
         address _genesis,
         address _rewardsContract,
         address _usdtToken,
         address _cctpReceiver
-    ) public initializer {
-        __Ownable_init(_owner);
-        __UUPSUpgradeable_init();
-        
+    ) Ownable(_owner) {
         bridge = _bridge;
         genesis = IOpenworkGenesis(_genesis);
         rewardsContract = IOpenWorkRewards(_rewardsContract);
@@ -254,14 +242,6 @@ contract NativeOpenWorkJobContract is
         return authorizedContracts[contractAddress];
     }
 
-    function _authorizeUpgrade(address /* newImplementation */) internal view override {
-        require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
-    }
-
-    function upgradeFromDAO(address newImplementation) external {
-        require(msg.sender == address(bridge), "Only bridge can upgrade");
-        upgradeToAndCall(newImplementation, "");
-    }
     
     // ==================== ADMIN FUNCTIONS ====================
     
