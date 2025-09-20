@@ -132,7 +132,9 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 #### **NOWJC Implementation Evolution**
 1. **sendFast Version**: `0x06D762A13D2F65B84cf945A55A11616167F6323e` (Deprecated)
 2. **Mint-to-Contract Version**: `0x8A05Ac7c7Dfc4a17A0a6Dd39117D9Ca3FE075267` (Deprecated)  
-3. **🟢 FINAL Direct USDC Version**: `0x1a437E2abd28379f0D794f480f94E0208d708971` ✅ **ACTIVE**
+3. **Direct USDC Version**: `0x1a437E2abd28379f0D794f480f94E0208d708971` (Deprecated)
+4. **Direct Payment V1**: `0x616fE10DBaAc47252251cCfb01086f12c7742dd8` (Deprecated - Array bounds issue)
+5. **🟢 FINAL Direct Payment V2**: `0xA47aE86d4733f093DE77b85A14a3679C8CA3Aa45` ✅ **ACTIVE**
 
 #### **LOWJC Implementation**
 - **🟢 Fixed Mint Recipient Version**: `0xf8309030dA162386af864498CAA54990eCde021b` ✅ **ACTIVE**
@@ -164,7 +166,7 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 
 #### **Core Contracts**
 - **🟢 NOWJC Proxy**: `0x9E39B37275854449782F1a2a4524405cE79d6C1e` ✅ **ACTIVE**
-- **🟢 NOWJC Implementation**: `0x1a437E2abd28379f0D794f480f94E0208d708971` ✅ **FINAL VERSION**
+- **🟢 NOWJC Implementation**: `0xA47aE86d4733f093DE77b85A14a3679C8CA3Aa45` ✅ **DIRECT PAYMENT V2**
 - **🟢 Enhanced Native Bridge**: `0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7` ✅ **WITH CROSS-CHAIN ROUTING**
 - **Genesis Contract**: `0x85E0162A345EBFcbEb8862f67603F93e143Fa487` ✅
 
@@ -183,11 +185,33 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 - **WALL2 (Primary Deployer)**: `0xfD08836eeE6242092a9c869237a8d122275b024A` ✅
 - **WALL3 (Test User)**: `0x1D06bb4395AE7BFe9264117726D069C251dC27f5` ✅
 
+### **Ethereum Sepolia (Local Chain) - NEW DEPLOYMENT**
+
+#### **Core Contracts**
+- **🟢 LOWJC Proxy**: `0x325c6615Caec083987A5004Ce9110f932923Bd3A` ✅ **ACTIVE**
+- **🟢 LOWJC Implementation**: `0x50Ba7b7Ae87C7985BaAC1B481c255394750F7f7a` ✅ **LATEST VERSION**
+- **Local Bridge**: `0xa47e34C6FAb67f9489D22531f2DD572006058ae7` ✅ **ACTIVE**
+
+#### **CCTP Infrastructure**
+- **CCTP Sender (TokenMessenger)**: `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` ✅
+- **CCTP Transceiver**: `0x5cA4989dC80b19fc704aF9d7A02b7a99A2fB3461` ✅
+- **MessageTransmitter**: `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` ✅
+- **USDC Token**: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` ✅
+- **CCTP Domain**: `0` ✅
+
+#### **LayerZero Infrastructure**
+- **LayerZero Endpoint V2**: `0x6EDCE65403992e310A62460808c4b910D972f10f` ✅
+- **Chain EID**: `40161` ✅
+
 ### **LayerZero Peer Relationships**
 ```
 OP Sepolia Local Bridge ↔ Arbitrum Enhanced Bridge
 0xaff9967c6000ee6feec04d29a39cc7a4ecff4bc0 ↔ 0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7
             EID 40232    ↔    EID 40231
+
+ETH Sepolia Local Bridge ↔ Arbitrum Enhanced Bridge  
+0xa47e34C6FAb67f9489D22531f2DD572006058ae7 ↔ 0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7
+            EID 40161    ↔    EID 40231
 ```
 
 ### **CCTP Flow Configuration**
@@ -202,13 +226,13 @@ Sender: 0x72d6e...ea2bd5 → Receiver: 0x8FE6B...542DAA
 
 ### **Contract Source Files**
 - **LOWJC Final**: `src/current/unlocking unique contracts 19 sep/lowjc-final-unlocking-minttonomjc.sol`
-- **NOWJC Final**: `src/current/unlocking unique contracts 19 sep/nowjc-final-unlocking-minttocontract.sol`
+- **NOWJC Direct Payment V2**: `src/current/unlocking unique contracts 19 sep/nowjc-simple-direct-fix.sol`
 - **Enhanced Bridge**: `src/current/unlocking unique contracts 19 sep/native-bridge-final-unlocking.sol`
 
 ### **Critical Architecture Features**
 - ✅ **Direct USDC Minting**: CCTP mints USDC directly to NOWJC (not transceiver)
 - ✅ **Cross-Chain Payment Routing**: Enhanced bridge routes payment release messages
-- ✅ **sendFast Integration**: NOWJC uses its own USDC balance for cross-chain transfers
+- ✅ **Direct Payment to Applicant**: NOWJC sends USDC directly to job applicant wallet (not LOWJC)
 - ✅ **Bidirectional LayerZero**: Full cross-chain messaging between OP and Arbitrum Sepolia
 
 ---
@@ -216,3 +240,87 @@ Sender: 0x72d6e...ea2bd5 → Receiver: 0x8FE6B...542DAA
 **Registry Updated**: September 20, 2025  
 **Status**: ✅ **ALL CONTRACTS OPERATIONAL & VERIFIED**  
 **Last Test**: CCTP transfer to NOWJC successful (0.9999 USDC received)
+
+---
+
+## 🌟 **ETHEREUM SEPOLIA DEPLOYMENT - September 20, 2025**
+
+### **New Local Chain Addition**
+
+Following the successful OP Sepolia and Arbitrum Sepolia deployments, the system has been extended to support **Ethereum Sepolia** as an additional local chain, enabling the following new flow:
+
+**Job posted OP Sepolia → Applied from ETH Sepolia → Job started OP Sepolia → Payment received ETH Sepolia**
+
+### **Deployment Commands Executed**
+
+#### **1. Deploy Local Bridge**
+```bash
+source .env && forge create --broadcast --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/interchain locking passed/local-bridge-final.sol:LayerZeroBridge" --constructor-args 0x6EDCE65403992e310A62460808c4b910D972f10f 0xfD08836eeE6242092a9c869237a8d122275b024A 40231 40161 40161
+```
+**Result**: `0xa47e34C6FAb67f9489D22531f2DD572006058ae7` ✅  
+**TX Hash**: `0x14925d8ccb7def094a2c0c7fad255594cacd281a3e117d5150560a8cd60a7dd5`
+
+#### **2. Deploy LOWJC Implementation**
+```bash
+source .env && forge create --broadcast --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/unlocking unique contracts 19 sep/lowjc-final-unlocking-minttonomjc.sol:CrossChainLocalOpenWorkJobContract"
+```
+**Result**: `0x50Ba7b7Ae87C7985BaAC1B481c255394750F7f7a` ✅  
+**TX Hash**: `0x60d2f9a8eca37acdd82afea66e2b905df2d63e40c6b2df22ec2313cff444cbf8`
+
+#### **3. Deploy CCTP Transceiver**
+```bash
+source .env && forge create --broadcast --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/interchain locking passed/cctp-v2-ft-transceiver.sol:CCTPv2Transceiver" --constructor-args 0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA 0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
+```
+**Result**: `0x5cA4989dC80b19fc704aF9d7A02b7a99A2fB3461` ✅  
+**TX Hash**: `0x530a0d1cfa3071b2d0df318e120ba2abcfa392d5ef6f29407549fce721373cf7`
+
+#### **4. Deploy LOWJC Proxy**
+```bash
+source .env && forge create --broadcast --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/interchain locking passed/proxy.sol:UUPSProxy" --constructor-args 0x50Ba7b7Ae87C7985BaAC1B481c255394750F7f7a 0xd37ff494000000000000000000000000fd08836eee6242092a9c869237a8d122275b024a0000000000000000000000001c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000009ce1000000000000000000000000a47e34c6fab67f9489d22531f2dd572006058ae70000000000000000000000005ca4989dc80b19fc704af9d7a02b7a99a2fb3461
+```
+**Result**: `0x325c6615Caec083987A5004Ce9110f932923Bd3A` ✅  
+**TX Hash**: `0x5957b834d192b720d35beae159240cc02d479b9d947e1029bfe0118408231895`
+
+### **Configuration Commands**
+
+#### **5. Configure Bridge ↔ LOWJC Connections**
+```bash
+# Authorize LOWJC to use Bridge
+source .env && cast send 0xa47e34C6FAb67f9489D22531f2DD572006058ae7 "authorizeContract(address,bool)" 0x325c6615Caec083987A5004Ce9110f932923Bd3A true --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# TX: 0x269cb4c25531cbbe0e5ef6020e4922a5a266738b6b01fee2aff35d334b26785a
+
+# Set LOWJC Contract Reference in Bridge
+source .env && cast send 0xa47e34C6FAb67f9489D22531f2DD572006058ae7 "setLowjcContract(address)" 0x325c6615Caec083987A5004Ce9110f932923Bd3A --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# TX: 0xf31c007f3e3a97da753529a5c23eac76fa1f6201880ba659e500ffb8ce3347bf
+```
+
+#### **6. Configure LayerZero Peer Connections**
+```bash
+# Set ETH Sepolia Bridge as peer in Arbitrum Enhanced Bridge
+source .env && cast send 0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7 "setPeer(uint32,bytes32)" 40161 0x000000000000000000000000a47e34c6fab67f9489d22531f2dd572006058ae7 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# TX: 0xeec78dd2ac3855682ede64b32c794121c0d6bfdf9cbc5d812df6c368a412c556
+
+# Set Arbitrum Enhanced Bridge as peer in ETH Sepolia Bridge
+source .env && cast send 0xa47e34C6FAb67f9489D22531f2DD572006058ae7 "setPeer(uint32,bytes32)" 40231 0x000000000000000000000000Ae02010666052571E399b1fe9E2c39B37A3Bc3A7 --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# TX: 0x75161d74d5c0414c8ebd58fb1c2123174e2060044bbfb309fd753ca511eee5ad
+```
+
+### **Architecture Summary**
+
+The system now supports **three interconnected chains**:
+
+```
+📍 Ethereum Sepolia (EID 40161) ↔ Arbitrum Sepolia (EID 40231) ↔ Optimism Sepolia (EID 40232)
+   Local Chain (NEW)              Native Chain                    Local Chain (EXISTING)
+   
+   LOWJC: 0x325c6615...            NOWJC: 0x9E39B375...            LOWJC: 0x896a3Bc6...
+   Bridge: 0xa47e34C6...           Bridge: 0xAe020106...           Bridge: 0xaff9967c...
+```
+
+**Key Benefits:**
+- ✅ **Multi-Local Chain Support**: Jobs can be posted on any local chain
+- ✅ **Cross-Chain Applications**: Users can apply from different chains  
+- ✅ **Direct Payment Routing**: Payments route directly to applicant wallets
+- ✅ **CCTP Integration**: Seamless USDC transfers across all supported chains
+
+**🚀 Status**: ✅ **ETHEREUM SEPOLIA FULLY OPERATIONAL** - Ready for cross-chain job applications and direct payments
