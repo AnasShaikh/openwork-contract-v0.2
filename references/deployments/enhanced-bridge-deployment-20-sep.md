@@ -111,6 +111,36 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 ```
 **TX Hash**: `0x5099de00b9d1e9aded1a30636e7faa427f88fe33d70d17049c7483a82447d995` ✅
 
+### **NOWJC Domain Fix Implementation**
+**NOWJC Domain Fix Implementation**:
+```bash
+source .env && forge create --broadcast --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/unlocking unique contracts 19 sep/nowjc-domain-fix.sol:NativeOpenWorkJobContract"
+```
+
+**Result**: `0xcABC373782f682FdEeE22D8Faf29d46C2488b4A8` ✅  
+**TX Hash**: `0xd7e9ce0318e9d5af2b266c2a23436963cdcade5d97a40672be82e81d46ce7fb1`
+
+### **NOWJC Domain Fix Proxy Upgrade**
+```bash
+source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAndCall(address,bytes)" 0xcABC373782f682FdEeE22D8Faf29d46C2488b4A8 0x --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+```
+**TX Hash**: `0xc0154af153a61a2b9648534dffc1008cbc8c3899c7007f8ff302ba7a55670473` ✅
+
+### **NOWJC Complete Domain Fix Implementation**
+**NOWJC Complete Domain Fix Implementation** (Fixed all domain validations):
+```bash
+source .env && forge create --broadcast --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/unlocking unique contracts 19 sep/nowjc-domain-fix.sol:NativeOpenWorkJobContract"
+```
+
+**Result**: `0x5b4f880C96118A1665F97bCe8A09d2454d6c462F` ✅  
+**TX Hash**: `0xb44d9f78b5b78d2536bd6d51bee290341d83f01e506feff19413522f98edcec0`
+
+### **NOWJC Complete Domain Fix Proxy Upgrade**
+```bash
+source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAndCall(address,bytes)" 0x5b4f880C96118A1665F97bCe8A09d2454d6c462F 0x --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+```
+**TX Hash**: `0x8079ed398ba3afae4e6bd188537cd501609fc171510635939ee9f420d83c67d7` ✅
+
 ## 📋 **Final Implementation Summary**
 
 ### **Critical Architecture Fix**
@@ -134,7 +164,9 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 2. **Mint-to-Contract Version**: `0x8A05Ac7c7Dfc4a17A0a6Dd39117D9Ca3FE075267` (Deprecated)  
 3. **Direct USDC Version**: `0x1a437E2abd28379f0D794f480f94E0208d708971` (Deprecated)
 4. **Direct Payment V1**: `0x616fE10DBaAc47252251cCfb01086f12c7742dd8` (Deprecated - Array bounds issue)
-5. **🟢 FINAL Direct Payment V2**: `0xA47aE86d4733f093DE77b85A14a3679C8CA3Aa45` ✅ **ACTIVE**
+5. **Direct Payment V2**: `0xA47aE86d4733f093DE77b85A14a3679C8CA3Aa45` (Deprecated - Domain validation issue)
+6. **Domain Fix V3**: `0xcABC373782f682FdEeE22D8Faf29d46C2488b4A8` (Deprecated - Incomplete domain fix)
+7. **🟢 FINAL Complete Domain Fix V4**: `0x5b4f880C96118A1665F97bCe8A09d2454d6c462F` ✅ **ACTIVE**
 
 #### **LOWJC Implementation**
 - **🟢 Fixed Mint Recipient Version**: `0xf8309030dA162386af864498CAA54990eCde021b` ✅ **ACTIVE**
@@ -166,7 +198,7 @@ source .env && cast send 0x9E39B37275854449782F1a2a4524405cE79d6C1e "upgradeToAn
 
 #### **Core Contracts**
 - **🟢 NOWJC Proxy**: `0x9E39B37275854449782F1a2a4524405cE79d6C1e` ✅ **ACTIVE**
-- **🟢 NOWJC Implementation**: `0xA47aE86d4733f093DE77b85A14a3679C8CA3Aa45` ✅ **DIRECT PAYMENT V2**
+- **🟢 NOWJC Implementation**: `0x5b4f880C96118A1665F97bCe8A09d2454d6c462F` ✅ **COMPLETE DOMAIN FIX V4**
 - **🟢 Enhanced Native Bridge**: `0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7` ✅ **WITH CROSS-CHAIN ROUTING**
 - **Genesis Contract**: `0x85E0162A345EBFcbEb8862f67603F93e143Fa487` ✅
 
@@ -324,3 +356,205 @@ The system now supports **three interconnected chains**:
 - ✅ **CCTP Integration**: Seamless USDC transfers across all supported chains
 
 **🚀 Status**: ✅ **ETHEREUM SEPOLIA FULLY OPERATIONAL** - Ready for cross-chain job applications and direct payments
+
+---
+
+## 🌐 **CROSS-CHAIN APPLICATION ENHANCEMENT - September 20, 2025 (Evening)**
+
+### **Multi-Chain Job Application Capability Deployment**
+
+Following the successful multi-chain infrastructure deployment, we identified and resolved a critical limitation preventing true cross-chain job applications. The system now supports users applying to jobs posted on different chains.
+
+### **Problem Addressed**
+The `applyToJob` function in LOWJC contracts had local job existence validations that prevented applications to jobs posted on other chains, limiting the cross-chain functionality.
+
+### **Solution: Enhanced LOWJC Implementation**
+**New Contract**: `src/current/unlocking unique contracts 19 sep/lowjc-final-cross-chain-apply.sol`
+
+**Key Improvements**:
+- ✅ **Removed local job existence validation** - Enables cross-chain applications
+- ✅ **Delegated validation to native chain** - Maintains data integrity
+- ✅ **Preserved application tracking** - Local application records for reference
+- ✅ **Enhanced cross-chain routing** - Proper message flow to native chain
+
+---
+
+## 📋 **CROSS-CHAIN APPLY DEPLOYMENT RESULTS**
+
+### **OP Sepolia Enhanced LOWJC**
+**Deploy New Implementation**:
+```bash
+source .env && forge create --broadcast --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/unlocking unique contracts 19 sep/lowjc-final-cross-chain-apply.sol:CrossChainLocalOpenWorkJobContract"
+```
+**Result**: `0x958e1CDd20108B874FB6F3833dA7E2EC5d745267` ✅  
+**TX Hash**: `0x98b463c7a9f2787a8007871b6849ed129ed7c345173a50ca2f62eefd0732ae10`
+
+**Upgrade Proxy**:
+```bash
+source .env && cast send 0x896a3Bc6ED01f549Fe20bD1F25067951913b793C "upgradeToAndCall(address,bytes)" 0x958e1CDd20108B874FB6F3833dA7E2EC5d745267 0x --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+```
+**TX Hash**: `0x49a81eaf1558cefaa4825bfeb4d72c16177647cf6de830f3bb775cdcd9f64e21` ✅
+
+### **Ethereum Sepolia Enhanced LOWJC**
+**Deploy New Implementation**:
+```bash
+source .env && forge create --broadcast --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY "src/current/unlocking unique contracts 19 sep/lowjc-final-cross-chain-apply.sol:CrossChainLocalOpenWorkJobContract"
+```
+**Result**: `0xFbF01A00C9A131FC8470C6Ad5c8DD43E82CAeBC7` ✅  
+**TX Hash**: `0xb04ffe31dd8648e2cf0c77ff5aaaeaa1246876fda7eefad78fc8b8892dbae2bf`
+
+**Upgrade Proxy**:
+```bash
+source .env && cast send 0x325c6615Caec083987A5004Ce9110f932923Bd3A "upgradeToAndCall(address,bytes)" 0xFbF01A00C9A131FC8470C6Ad5c8DD43E82CAeBC7 0x --rpc-url $ETHEREUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+```
+**TX Hash**: `0x57341edf7069a102f51b22fa0ddc1ba00630d216decb5e4aef79db50bb5ac086` ✅
+
+---
+
+## 📋 **UPDATED COMPLETE CONTRACT REGISTRY - All Current Working Addresses**
+
+### **Optimism Sepolia (Local Chain)**
+
+#### **Core Contracts**
+- **🟢 LOWJC Proxy**: `0x896a3Bc6ED01f549Fe20bD1F25067951913b793C` ✅ **ACTIVE**
+- **🟢 LOWJC Implementation**: `0x8293C052Dd72910f14eb5097240B7059286a60e6` ✅ **CROSS-CHAIN RELEASE FINAL**
+- **Local Bridge**: `0xaff9967c6000ee6feec04d29a39cc7a4ecff4bc0` ✅ **ACTIVE**
+
+#### **CCTP Infrastructure**
+- **CCTP Sender (TokenMessenger)**: `0x72d6efedda70f9b4ed3fff4bdd0844655aea2bd5` ✅
+- **MessageTransmitter**: `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` ✅
+- **USDC Token**: `0x5fd84259d66cd46123540766be93dfe6d43130d7` ✅
+- **CCTP Domain**: `2` ✅
+
+#### **LayerZero Infrastructure**
+- **LayerZero Endpoint V2**: `0x6EDCE65403992e310A62460808c4b910D972f10f` ✅
+- **Chain EID**: `40232` ✅
+
+### **Arbitrum Sepolia (Native Chain)**
+
+#### **Core Contracts**
+- **🟢 NOWJC Proxy**: `0x9E39B37275854449782F1a2a4524405cE79d6C1e` ✅ **ACTIVE**
+- **🟢 NOWJC Implementation**: `0x5b4f880C96118A1665F97bCe8A09d2454d6c462F` ✅ **COMPLETE DOMAIN FIX V4**
+- **🟢 Enhanced Native Bridge**: `0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7` ✅ **WITH CROSS-CHAIN ROUTING**
+- **Genesis Contract**: `0x85E0162A345EBFcbEb8862f67603F93e143Fa487` ✅
+
+#### **CCTP Infrastructure**
+- **CCTP Receiver (TokenMessenger)**: `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` ✅
+- **CCTP Transceiver**: `0xB64f20A20F55D77bbe708Db107AA5E53a9e39063` ✅
+- **MessageTransmitter**: `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` ✅
+- **USDC Token**: `0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d` ✅
+- **CCTP Domain**: `3` ✅
+
+#### **LayerZero Infrastructure**
+- **LayerZero Endpoint V2**: `0x6EDCE65403992e310A62460808c4b910D972f10f` ✅
+- **Chain EID**: `40231` ✅
+
+### **Ethereum Sepolia (Local Chain) - ENHANCED DEPLOYMENT**
+
+#### **Core Contracts**
+- **🟢 LOWJC Proxy**: `0x325c6615Caec083987A5004Ce9110f932923Bd3A` ✅ **ACTIVE**
+- **🟢 LOWJC Implementation**: `0x8044f58FDc39CB6A8bd4Cd59734EA081e1a0841e` ✅ **CROSS-CHAIN RELEASE VERSION**
+- **Local Bridge**: `0xa47e34C6FAb67f9489D22531f2DD572006058ae7` ✅ **ACTIVE**
+
+#### **CCTP Infrastructure**
+- **CCTP Sender (TokenMessenger)**: `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` ✅
+- **CCTP Transceiver**: `0x5cA4989dC80b19fc704aF9d7A02b7a99A2fB3461` ✅
+- **MessageTransmitter**: `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` ✅
+- **USDC Token**: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` ✅
+- **CCTP Domain**: `0` ✅
+
+#### **LayerZero Infrastructure**
+- **LayerZero Endpoint V2**: `0x6EDCE65403992e310A62460808c4b910D972f10f` ✅
+- **Chain EID**: `40161` ✅
+
+### **Key Wallet Addresses**
+- **WALL2 (Primary Deployer)**: `0xfD08836eeE6242092a9c869237a8d122275b024A` ✅
+- **WALL3 (Test User)**: `0x1D06bb4395AE7BFe9264117726D069C251dC27f5` ✅
+
+### **LayerZero Peer Relationships**
+```
+OP Sepolia Local Bridge ↔ Arbitrum Enhanced Bridge
+0xaff9967c6000ee6feec04d29a39cc7a4ecff4bc0 ↔ 0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7
+            EID 40232    ↔    EID 40231
+
+ETH Sepolia Local Bridge ↔ Arbitrum Enhanced Bridge  
+0xa47e34C6FAb67f9489D22531f2DD572006058ae7 ↔ 0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7
+            EID 40161    ↔    EID 40231
+```
+
+### **CCTP Flow Configuration**
+```
+OP Sepolia (Domain 2) → Arbitrum Sepolia (Domain 3)
+USDC: 0x5fd84...d130d7 → USDC: 0x75faf...aa4d
+Sender: 0x72d6e...ea2bd5 → Receiver: 0x8FE6B...542DAA
+                      ↓
+                Mint Recipient: NOWJC Proxy
+                0x9E39B37275854449782F1a2a4524405cE79d6C1e
+
+ETH Sepolia (Domain 0) → Arbitrum Sepolia (Domain 3)
+USDC: 0x1c7D4...79C7238 → USDC: 0x75faf...aa4d
+Sender: 0x8FE6B...542DAA → Receiver: 0x8FE6B...542DAA
+                      ↓
+                Mint Recipient: NOWJC Proxy
+                0x9E39B37275854449782F1a2a4524405cE79d6C1e
+```
+
+### **Contract Source Files**
+- **LOWJC Cross-Chain Release**: `src/current/unlocking unique contracts 19 sep/lowjc-final-cross-chain-release.sol`
+- **NOWJC Direct Payment V2**: `src/current/unlocking unique contracts 19 sep/nowjc-simple-direct-fix.sol`
+- **Enhanced Bridge**: `src/current/unlocking unique contracts 19 sep/native-bridge-final-unlocking.sol`
+
+### **Critical Architecture Features**
+- ✅ **Cross-Chain Job Applications**: Users can apply to jobs posted on any local chain
+- ✅ **Direct USDC Minting**: CCTP mints USDC directly to NOWJC (not transceiver)
+- ✅ **Cross-Chain Payment Routing**: Enhanced bridge routes payment release messages
+- ✅ **Direct Payment to Applicant**: NOWJC sends USDC directly to job applicant wallet (not LOWJC)
+- ✅ **Bidirectional LayerZero**: Full cross-chain messaging between all chains
+- ✅ **Multi-Chain Validation**: Local chains handle basic validation, native chain handles complete validation
+
+---
+
+**Registry Updated**: September 20, 2025 (Evening)  
+**Status**: ✅ **ALL CONTRACTS OPERATIONAL & CROSS-CHAIN APPLICATIONS ENABLED**  
+**Latest Enhancement**: True cross-chain job applications now working across all local chains
+
+---
+
+## 🎯 **COMPLETE CROSS-CHAIN WORKFLOW NOW SUPPORTED**
+
+### **Enabled Workflows:**
+1. **OP Sepolia Job → Ethereum Sepolia Application → Arbitrum Processing → Direct Payment**
+2. **Ethereum Sepolia Job → OP Sepolia Application → Arbitrum Processing → Direct Payment**
+3. **Same-Chain Operations** (all existing functionality preserved)
+
+### **Architecture Validation:**
+- ✅ **Multi-Local Chain Support**: Jobs can be posted on any local chain
+- ✅ **True Cross-Chain Applications**: Users can apply from different chains than job posting
+- ✅ **Centralized Processing**: All validation and job management on Arbitrum Sepolia
+- ✅ **Direct Payment Routing**: Payments route directly to applicant wallets
+- ✅ **CCTP Integration**: Seamless USDC transfers across all supported chains
+- ✅ **Scalable Design**: Ready for additional local chains
+
+**🚀 Status**: ✅ **COMPLETE MULTI-CHAIN JOB PLATFORM OPERATIONAL**
+
+---
+
+## 📝 **Latest Deployment Updates**
+
+### **Ethereum Sepolia LOWJC Cross-Chain Upgrade - September 20, 2025**
+
+**Deployment**:
+- **New Implementation**: `0x8044f58FDc39CB6A8bd4Cd59734EA081e1a0841e`
+- **Source File**: `lowjc-final-cross-chain-release.sol`
+- **Deploy TX**: `0x28f8b009fa86e9475c5caa4493134d478cc0e4f35ef0bbb4d0292a05a8700588`
+
+**Upgrade**:
+- **Proxy**: `0x325c6615Caec083987A5004Ce9110f932923Bd3A`
+- **Upgrade TX**: `0x06eb82de30f546de6fd3f568628c69ae91d3bd133fdd59b20ea43f2abb936b39`
+
+**Features Enabled**:
+- ✅ Cross-chain job applications (apply from any local chain)
+- ✅ Cross-chain job startup (start jobs with cross-chain applicants)
+- ✅ Cross-chain payment release (release payments to cross-chain applicants)
+
+**Status**: ✅ **ETHEREUM SEPOLIA NOW FULLY CROSS-CHAIN COMPATIBLE**
