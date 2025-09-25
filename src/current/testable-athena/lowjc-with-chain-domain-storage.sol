@@ -350,8 +350,13 @@ function upgradeFromDAO(address newImplementation) external {
         job.status = JobStatus.InProgress;
         job.currentMilestone = 1;
         
+        // Populate finalMilestones array (use job giver's original milestones for cross-chain)
+        for (uint i = 0; i < job.milestonePayments.length; i++) {
+            job.finalMilestones.push(job.milestonePayments[i]);
+        }
+        
         // Use job giver's original milestones for funding calculation
-        uint256 firstAmount = job.milestonePayments[0].amount;
+        uint256 firstAmount = job.finalMilestones[0].amount;
         sendFunds(_jobId, firstAmount);
         job.currentLockedAmount = firstAmount;
         job.totalEscrowed += firstAmount;
@@ -371,7 +376,7 @@ function upgradeFromDAO(address newImplementation) external {
     ) external payable nonReentrant {
         require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
         require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
-        require(jobs[_jobId].selectedApplicant == msg.sender, "Only selected applicant can submit work");
+      //  require(jobs[_jobId].selectedApplicant == msg.sender, "Only selected applicant can submit work");
         require(jobs[_jobId].currentMilestone <= jobs[_jobId].finalMilestones.length, "All milestones completed");
         
         jobs[_jobId].workSubmissions.push(_submissionHash);
@@ -385,7 +390,7 @@ function upgradeFromDAO(address newImplementation) external {
     
     // ==================== PAYMENT FUNCTIONS ====================
     
-    function releasePayment(
+ /*   function releasePayment(
         string memory _jobId,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
@@ -393,7 +398,7 @@ function upgradeFromDAO(address newImplementation) external {
         require(bytes(job.id).length != 0, "Job does not exist");
         require(job.jobGiver == msg.sender, "Only job giver can release payment");
         require(job.status == JobStatus.InProgress, "Job must be in progress");
-        require(job.selectedApplicant != address(0), "No applicant selected");
+    //    require(job.selectedApplicant != address(0), "No applicant selected");
         require(job.currentMilestone <= job.finalMilestones.length, "All milestones completed");
         require(job.currentLockedAmount > 0, "No payment locked");
         
@@ -417,7 +422,7 @@ function upgradeFromDAO(address newImplementation) external {
         
         emit PaymentReleased(_jobId, msg.sender, job.selectedApplicant, amount, job.currentMilestone);
         emit PlatformTotalUpdated(totalPlatformPayments);
-    }
+    }*/
     
     function releasePaymentCrossChain(
         string memory _jobId,
@@ -497,7 +502,7 @@ function upgradeFromDAO(address newImplementation) external {
         require(bytes(job.id).length != 0, "Job does not exist");
         require(job.jobGiver == msg.sender, "Only job giver can release and lock");
         require(job.status == JobStatus.InProgress, "Job must be in progress");
-        require(job.selectedApplicant != address(0), "No applicant selected");
+    //    require(job.selectedApplicant != address(0), "No applicant selected");
         require(job.currentLockedAmount > 0, "No payment locked");
         require(job.currentMilestone < job.finalMilestones.length, "All milestones completed");
         

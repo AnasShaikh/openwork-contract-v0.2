@@ -1,7 +1,7 @@
 # Contract Addresses Summary
 
-**Last Updated**: September 25, 2025 - 8:45PM  
-**Status**: Current Active Deployments - **Genesis Struct Fix Applied**
+**Last Updated**: September 25, 2025 - 11:35PM  
+**Status**: Current Active Deployments - **Milestone Logic Fix Applied**
 
 ## Core Contracts
 
@@ -10,9 +10,10 @@
 | **Native Athena** | Arbitrum Sepolia | Proxy | `0xedeb7729F5E62192FC1D0E43De0ee9C7Bd5cbFBE` | ✅ Active |
 | **Native Athena** | Arbitrum Sepolia | Implementation | `0x91Dce45efeFeD9D6146Cda4875b18ec57dAb2E90` | ✅ **Genesis Fix - 25-Sep** |
 | **NOWJC** | Arbitrum Sepolia | Proxy | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | ✅ Active |
-| **NOWJC** | Arbitrum Sepolia | Implementation | `0x16Af454B3A858B1De693D7E6A61DeD302FC5a1aC` | ✅ Current |
+| **NOWJC** | Arbitrum Sepolia | Implementation | `0x324A012c2b853F98cd557648b06400502b69Ef04` | ✅ **CCTP Integration - 25-Sep** |
 | **Enhanced Native Bridge** | Arbitrum Sepolia | Contract | `0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7` | ✅ Active |
 | **LOWJC** | OP Sepolia | Proxy | `0x896a3Bc6ED01f549Fe20bD1F25067951913b793C` | ✅ Active |
+| **LOWJC** | OP Sepolia | Implementation | `0x70303c2B9c71163F2278545BfB34d11504b3b602` | ✅ **Milestone Logic Fix - 25-Sep** |
 | **Local Bridge** | OP Sepolia | Contract | `0xaff9967c6000ee6feec04d29a39cc7a4ecff4bc0` | ✅ Active |
 | **Athena Client** | OP Sepolia | Proxy | `0x45E51B424c87Eb430E705CcE3EcD8e22baD267f7` | ✅ Active |
 | **LOWJC** | Ethereum Sepolia | Proxy | `0x325c6615Caec083987A5004Ce9110f932923Bd3A` | ✅ Active |

@@ -321,7 +321,6 @@ contract NativeOpenWorkJobContract is
     
     function setTargetChainNOWJC(uint32 _domain, address _nowjcAddress) external onlyOwner {
         require(_nowjcAddress != address(0), "Invalid address");
-        // ✅ REMOVED: require(_domain > 0, "Invalid domain");
         targetChainNOWJC[_domain] = _nowjcAddress;
     }
     
@@ -512,21 +511,21 @@ contract NativeOpenWorkJobContract is
         return 0; // Fallback if rewards contract not set
     }
 
-    function getUserTotalClaimableTokens(address user) external view returns (uint256) {
+  /*  function getUserTotalClaimableTokens(address user) external view returns (uint256) {
         if (address(rewardsContract) != address(0)) {
             return rewardsContract.getUserTotalClaimableTokens(user);
         }
         return 0;
-    }
+    }*/
 
-    function getCurrentBand() external view returns (uint256) {
+   /* function getCurrentBand() external view returns (uint256) {
         if (address(rewardsContract) != address(0)) {
             return rewardsContract.getCurrentBand();
         }
         return 0;
-    }
+    }*/
 
-    function getPlatformBandInfo() external view returns (
+  /*  function getPlatformBandInfo() external view returns (
         uint256 currentBand,
         uint256 currentTotal,
         uint256 bandMinAmount,
@@ -537,7 +536,7 @@ contract NativeOpenWorkJobContract is
             return rewardsContract.getPlatformBandInfo();
         }
         return (0, genesis.totalPlatformPayments(), 0, 0, 0);
-    }
+    }*/
 
     // ==================== JOB MANAGEMENT FUNCTIONS ====================
     
@@ -742,13 +741,30 @@ contract NativeOpenWorkJobContract is
     }
     
     function releasePaymentAndLockNext(address _jobGiver, string memory _jobId, uint256 _releasedAmount, uint256 _lockedAmount) external {
-        require(msg.sender == bridge, "Only bridge");
+      require(msg.sender == bridge, "Only bridge");
         
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         require(job.selectedApplicant != address(0), "No applicant");
         
-        // Transfer USDC directly from NOWJC to job taker (NOWJC now holds USDC)
-        usdtToken.safeTransfer(job.selectedApplicant, _releasedAmount);
+        // Get applicant's preferred chain domain for cross-chain transfer
+        uint32 applicantTargetDomain = jobApplicantChainDomain[_jobId][job.selectedApplicant];
+        
+        if (applicantTargetDomain == 3) {
+            // Native chain (Arbitrum) - direct transfer
+            usdtToken.safeTransfer(job.selectedApplicant, _releasedAmount);
+        } else {
+            // Cross-chain transfer via CCTP to applicant's preferred domain
+            require(cctpTransceiver != address(0), "CCTP Transceiver not set");
+            
+            // ✅ CRITICAL FIX: Use approve → sendFast pattern for cross-chain release
+            usdtToken.approve(cctpTransceiver, _releasedAmount);
+            ICCTPTransceiver(cctpTransceiver).sendFast(
+                _releasedAmount,
+                applicantTargetDomain,
+                bytes32(uint256(uint160(job.selectedApplicant))),
+                1000
+            );
+        }
         
         // Update job total paid in Genesis
         genesis.updateJobTotalPaid(_jobId, _releasedAmount);
