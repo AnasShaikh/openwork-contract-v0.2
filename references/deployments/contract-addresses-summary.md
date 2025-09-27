@@ -23,7 +23,8 @@
 | **Local Bridge** | Ethereum Sepolia | Contract | `0xa47e34C6FAb67f9489D22531f2DD572006058ae7` | ✅ Active |
 | **OpenWork Token (OW)** | Base Sepolia | Contract | `0x5f24747d5e59F9CCe5a9815BC12E2fB5Ae713679` | ✅ **NEW - 27-Sep** |
 | **Main Chain Bridge** | Base Sepolia | Contract | `0x70d30e5dAb5005b126C040f1D9b0bDDBc16679b0` | ✅ **NEW - 27-Sep** |
-| **Cross-Chain Rewards** | Base Sepolia | Contract | `0x55a0FE495c61d36F4Ac93D440DD13d146fb68f53` | ✅ **NEW - 27-Sep** |
+| **Cross-Chain Rewards** | Base Sepolia | Proxy | `0xd6bE0C187408155be99C4e9d6f860eDDa27b056B` | ✅ **NEW - 27-Sep** |
+| **Cross-Chain Rewards** | Base Sepolia | Implementation | `0x55a0FE495c61d36F4Ac93D440DD13d146fb68f53` | ✅ **NEW - 27-Sep** |
 | **Main DAO** | Base Sepolia | Proxy | `0xc3579BDC6eC1fAad8a67B1Dc5542EBcf28456465` | ✅ **NEW - 27-Sep** |
 | **Main DAO** | Base Sepolia | Implementation | `0xbde733D64D8C2bcA369433E7dC96DC3ecFE414e4` | ✅ **NEW - 27-Sep** |
 
