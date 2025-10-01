@@ -275,6 +275,7 @@ contract AthenaClientTestable is
         string memory _disputeHash,
         string memory _oracleName,
         uint256 _feeAmount,
+        uint256 _disputedAmount,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
         require(_feeAmount > 0, "Fee amount must be greater than 0");
@@ -318,7 +319,7 @@ contract AthenaClientTestable is
         routeFeeToNative(_feeAmount);
         
         // Send cross-chain message to Native Athena with fee routing data
-        bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount, msg.sender);
+        bytes memory payload = abi.encode("raiseDispute", _jobId, _disputeHash, _oracleName, _feeAmount, _disputedAmount, msg.sender);
         bridge.sendToNativeChain{value: msg.value}("raiseDispute", payload, _nativeOptions);
         
         emit DisputeRaised(msg.sender, _jobId, _feeAmount);

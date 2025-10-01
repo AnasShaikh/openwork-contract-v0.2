@@ -161,10 +161,7 @@ contract NativeAthenaProductionCCTP is
     
     // CCTP Integration (from testable contract)
     IERC20 public usdcToken;
-    
-    // Per-dispute fee tracking (replaces global accumulatedFees)
-    mapping(string => uint256) public disputeFees;  // disputeId => fee amount
-    mapping(string => bool) public disputeFeesReceived;  // disputeId => received status
+    uint256 public accumulatedFees;
     
     // Genesis storage contract
     IOpenworkGenesis public genesis;
@@ -253,10 +250,7 @@ contract NativeAthenaProductionCCTP is
     event SkillVerificationSubmitted(address indexed applicant, string targetOracleName, uint256 feeAmount);
     event AskAthenaSubmitted(address indexed applicant, string targetOracle, string fees);
     event FeesWithdrawn(address indexed owner, uint256 amount);
-    event DisputeFeesReceived(string indexed disputeId, uint256 amount);
-    event DisputeFeesDistributed(string indexed disputeId, uint256 amount);
-    event FeePaymentProcessed(string indexed disputeId, address indexed recipient, uint256 amount);
-    event DisputedFundsResolved(string indexed disputeId, address indexed winner, bool winningSide);
+    event FeeDistributed(string indexed disputeId, address indexed recipient, uint256 amount);
     
     modifier onlyDAO() {
         require(msg.sender == daoContract, "Only DAO can call this function");
@@ -343,7 +337,7 @@ contract NativeAthenaProductionCCTP is
     
     // ==================== MESSAGE HANDLERS ====================
     
-    function handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, address disputeRaiser) external {
+    function handleRaiseDispute(string memory jobId, string memory disputeHash, string memory oracleName, uint256 fee, uint256 disputedAmount, address disputeRaiser) external {
        // require(msg.sender == address(bridge), "Only bridge can call this function");        
         // Check if oracle is active (has minimum required members) - get from genesis
         IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(oracleName);
@@ -354,11 +348,7 @@ contract NativeAthenaProductionCCTP is
         require(!existingDispute.isVotingActive && existingDispute.timeStamp == 0, "Dispute already exists for this job");
         
         // Create new dispute in genesis
-        genesis.setDispute(jobId, fee, disputeHash, disputeRaiser, fee);
-        
-        // Register fee for this dispute (CCTP already delivered USDC to contract)
-        disputeFees[jobId] = fee;
-        disputeFeesReceived[jobId] = true;
+        genesis.setDispute(jobId, disputedAmount, disputeHash, disputeRaiser, fee);
         
         emit DisputeRaised(jobId, disputeRaiser, fee);
     }
@@ -650,6 +640,43 @@ contract NativeAthenaProductionCCTP is
     
     // ==================== NEW: CCTP DISPUTE SETTLEMENT ====================
     
+    function _distributeFeeToWinningVoters(string memory _disputeId, bool _winningSide, uint256 _totalFees) internal {
+        if (_totalFees == 0 || address(usdcToken) == address(0)) {
+            return;
+        }
+        
+        // Get all voters for this dispute
+        IOpenworkGenesis.VoterData[] memory voters = genesis.getDisputeVoters(_disputeId);
+        
+        if (voters.length == 0) {
+            return;
+        }
+        
+        // Calculate total voting power of winning side
+        uint256 totalWinningVotingPower = 0;
+        for (uint256 i = 0; i < voters.length; i++) {
+            if (voters[i].voteFor == _winningSide) {
+                totalWinningVotingPower += voters[i].votingPower;
+            }
+        }
+        
+        if (totalWinningVotingPower == 0) {
+            return;
+        }
+        
+        // Distribute fees proportionally to winning voters
+        for (uint256 i = 0; i < voters.length; i++) {
+            if (voters[i].voteFor == _winningSide && voters[i].claimAddress != address(0)) {
+                uint256 voterFeeShare = (_totalFees * voters[i].votingPower) / totalWinningVotingPower;
+                
+                if (voterFeeShare > 0) {
+                    usdcToken.safeTransfer(voters[i].claimAddress, voterFeeShare);
+                    emit FeeDistributed(_disputeId, voters[i].claimAddress, voterFeeShare);
+                }
+            }
+        }
+    }
+    
     function settleDispute(string memory _disputeId) external {
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
         require(dispute.timeStamp > 0, "Dispute does not exist");
@@ -658,161 +685,27 @@ contract NativeAthenaProductionCCTP is
         bool winningSide = dispute.votesFor > dispute.votesAgainst;
         genesis.finalizeDispute(_disputeId, winningSide);
         
-        // Process fee payments to winning voters and handle disputed funds
-        _processDisputeFees(_disputeId, winningSide);
-        
-        emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
-    }
-    
-    function processFeePayment(
-        string memory _disputeId,
-        address[] memory _recipients,
-        address[] memory _claimAddresses,
-        uint256[] memory _votingPowers,
-        bool[] memory _voteDirections,
-        bool _winningSide,
-        uint256 _totalFees
-    ) public {
-        require(_recipients.length == _claimAddresses.length, "Array length mismatch");
-        require(_totalFees <= disputeFees[_disputeId], "Insufficient dispute fees");
-        
-        uint256 totalWinningVotingPower = 0;
-        
-        // Calculate total winning voting power
-        for (uint256 i = 0; i < _recipients.length; i++) {
-            if (_voteDirections[i] == _winningSide) {
-                totalWinningVotingPower += _votingPowers[i];
+        // Handle disputed funds release using Genesis Job struct (FIXED INTERFACE)
+        if (address(nowjContract) != address(0)) {
+            IOpenworkGenesis.Job memory job = genesis.getJob(_disputeId);
+            
+            address winner = winningSide ? job.jobGiver : job.selectedApplicant;
+            uint32 winnerChainDomain = _parseJobIdForChainDomain(_disputeId);
+            
+            if (winner != address(0)) {
+                uint256 disputeAmount = dispute.disputedAmount;
+                nowjContract.releaseDisputedFunds(winner, disputeAmount, winnerChainDomain);
             }
         }
         
         // Distribute fees to winning voters
-        if (totalWinningVotingPower > 0) {
-            for (uint256 i = 0; i < _recipients.length; i++) {
-                if (_voteDirections[i] == _winningSide) {
-                    uint256 voterShare = (_votingPowers[i] * _totalFees) / totalWinningVotingPower;
-                    
-                    if (voterShare > 0) {
-                        usdcToken.safeTransfer(_claimAddresses[i], voterShare);
-                        disputeFees[_disputeId] -= voterShare;
-                        emit FeePaymentProcessed(_disputeId, _claimAddresses[i], voterShare);
-                    }
-                }
-            }
-        }
+        _distributeFeeToWinningVoters(_disputeId, winningSide, dispute.fees);
         
-        // Resolve disputed job funds after fee distribution
-        _resolveDisputedFunds(_disputeId, _winningSide);
-    }
-    
-    function _processDisputeFees(string memory _disputeId, bool _winningSide) internal {
-        // Get dispute details for fee amount
-        IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-        if (dispute.fees == 0) return; // No fees to distribute
-        
-        // Get voter data from Genesis
-        IOpenworkGenesis.VoterData[] memory genesisVoters = genesis.getDisputeVoters(_disputeId);
-        if (genesisVoters.length == 0) return; // No voters
-        
-        // Prepare arrays for processFeePayment
-        address[] memory recipients = new address[](genesisVoters.length);
-        address[] memory claimAddresses = new address[](genesisVoters.length);
-        uint256[] memory votingPowers = new uint256[](genesisVoters.length);
-        bool[] memory voteDirections = new bool[](genesisVoters.length);
-        
-        // Fill arrays from voter data
-        for (uint256 i = 0; i < genesisVoters.length; i++) {
-            recipients[i] = genesisVoters[i].voter;
-            claimAddresses[i] = genesisVoters[i].claimAddress;
-            votingPowers[i] = genesisVoters[i].votingPower;
-            voteDirections[i] = genesisVoters[i].voteFor;
-        }
-        
-        // Process fee payments and disputed funds
-        processFeePayment(
-            _disputeId,
-            recipients,
-            claimAddresses,
-            votingPowers,
-            voteDirections,
-            _winningSide,
-            dispute.fees
-        );
+        emit DisputeFinalized(_disputeId, winningSide, dispute.votesFor, dispute.votesAgainst);
     }
     
     // ==================== CCTP FEE MANAGEMENT ====================
     
-  /*  function withdrawFees(uint256 _amount) external onlyOwner {
-        require(address(usdcToken) != address(0), "USDC token not set");
-        
-        uint256 contractBalance = usdcToken.balanceOf(address(this));
-        require(contractBalance > 0, "No USDC balance to withdraw");
-        require(_amount <= contractBalance, "Amount exceeds contract balance");
-        
-        // NOTE: Manual withdrawal should specify which dispute's fees to withdraw
-        // For now, we'll withdraw from contract balance without affecting dispute tracking
-        // TODO: Add disputeId parameter to withdraw specific dispute fees
-        
-        usdcToken.safeTransfer(owner(), _amount);
-        emit FeesWithdrawn(owner(), _amount);
-    }*/
-    
- /*   function withdrawAllFees() external onlyOwner {
-        require(address(usdcToken) != address(0), "USDC token not set");
-        
-        uint256 contractBalance = usdcToken.balanceOf(address(this));
-        require(contractBalance > 0, "No USDC balance to withdraw");
-        
-        // NOTE: This withdraws all USDC but doesn't affect dispute fee tracking
-        // Individual dispute settlements will fail if their fees were withdrawn
-        usdcToken.safeTransfer(owner(), contractBalance);
-        emit FeesWithdrawn(owner(), contractBalance);
-    }*/
-    
-    // NOTE: receiveFees function removed - fees are now automatically registered in handleRaiseDispute
-    // when CCTP delivers USDC to the contract
-    
-    function _resolveDisputedFunds(string memory _disputeId, bool _winningSide) internal {
-        // Get job details from Genesis using proper struct access
-        if (address(nowjContract) == address(0)) return; // No NOWJC connected
-        
-        // Get job details from Genesis (not NOWJC) to determine winner
-        IOpenworkGenesis.Job memory job = genesis.getJob(_disputeId);
-        if (bytes(job.id).length == 0) return; // Job not found
-        
-        address winner;
-        uint32 winnerChainDomain;
-        
-        // Determine dispute winner based on voting result
-        if (_winningSide) {
-            // Job giver wins - typically means job giver was right
-            winner = job.jobGiver;
-            winnerChainDomain = _getChainDomainForUser(job.jobGiver);
-        } else {
-            // Selected applicant wins - typically means applicant was right
-            winner = job.selectedApplicant;
-            winnerChainDomain = _getChainDomainForUser(job.selectedApplicant);
-        }
-        
-        if (winner != address(0)) {
-            // Get dispute details to get the disputed amount
-            IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-            if (dispute.disputedAmount > 0) {
-                // Call NOWJC to release disputed funds with correct parameters
-                nowjContract.releaseDisputedFunds(winner, dispute.disputedAmount, winnerChainDomain);
-                emit DisputedFundsResolved(_disputeId, winner, _winningSide);
-            }
-        }
-    }
-    
-    function _getChainDomainForUser(address /* _user */) internal pure returns (uint32) {
-        // TODO: Implement chain detection logic
-        // For now, default to native chain (Arbitrum = domain 3)
-        // In production, this could:
-        // 1. Check user's original registration chain
-        // 2. Use bridge mapping of user preferences
-        // 3. Query cross-chain user registry
-        return 3; // Default to native chain
-    }
     
     // ==================== UTILITY FUNCTIONS ====================
     
