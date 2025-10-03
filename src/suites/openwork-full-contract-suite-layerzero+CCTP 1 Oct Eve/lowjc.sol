@@ -342,7 +342,7 @@ function upgradeFromDAO(address newImplementation) external {
         
         Job storage job = jobs[_jobId];
         require(job.jobGiver == msg.sender, "Only job giver can start job");
-        require(job.status == JobStatus.Open, "Job is not open");
+       // require(job.status == JobStatus.Open, "Job is not open");
         
         // For cross-chain jobs, delegate all application validation to native chain
         // Update local job state for tracking
@@ -374,8 +374,8 @@ function upgradeFromDAO(address newImplementation) external {
         string memory _submissionHash,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
-        require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
-        require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
+     //   require(bytes(jobs[_jobId].id).length != 0, "Job does not exist");
+       // require(jobs[_jobId].status == JobStatus.InProgress, "Job must be in progress");
       //  require(jobs[_jobId].selectedApplicant == msg.sender, "Only selected applicant can submit work");
         require(jobs[_jobId].currentMilestone <= jobs[_jobId].finalMilestones.length, "All milestones completed");
         

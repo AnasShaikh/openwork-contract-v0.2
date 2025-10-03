@@ -51,7 +51,7 @@ interface IOpenworkGenesis {
     function addPortfolio(address user, string memory portfolioHash) external;
     function setJob(string memory jobId, address jobGiver, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts) external;
     function addJobApplicant(string memory jobId, address applicant) external;
-    function setJobApplication(string memory jobId, uint256 applicationId, address applicant, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts) external;
+    function setJobApplication(string memory jobId, uint256 applicationId, address applicant, string memory applicationHash, string[] memory descriptions, uint256[] memory amounts, uint32 preferredPaymentChainDomain, address preferredPaymentAddress) external;
     function updateJobStatus(string memory jobId, JobStatus status) external;
     function setJobSelectedApplicant(string memory jobId, address applicant, uint256 applicationId) external;
     function setJobCurrentMilestone(string memory jobId, uint256 milestone) external;
@@ -601,14 +601,14 @@ contract NativeOpenWorkJobContract is
     function applyToJob(address _applicant, string memory _jobId, string memory _applicationHash, string[] memory _descriptions, uint256[] memory _amounts, uint32 _preferredChainDomain) external {
         require(_descriptions.length == _amounts.length, "Length mismatch");
         
-        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+     /*   IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         for (uint i = 0; i < job.applicants.length; i++) {
             require(job.applicants[i] != _applicant, "Already applied");
-        }
+        }*/
         
         genesis.addJobApplicant(_jobId, _applicant);
         uint256 applicationId = genesis.getJobApplicationCount(_jobId) + 1;
-        genesis.setJobApplication(_jobId, applicationId, _applicant, _applicationHash, _descriptions, _amounts);
+        genesis.setJobApplication(_jobId, applicationId, _applicant, _applicationHash, _descriptions, _amounts, _preferredChainDomain, _applicant);
         
         // Store applicant's preferred chain domain for dispute resolution
         jobApplicantChainDomain[_jobId][_applicant] = _preferredChainDomain;

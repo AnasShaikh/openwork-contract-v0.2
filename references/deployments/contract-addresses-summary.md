@@ -1,7 +1,7 @@
 # Contract Addresses Summary
 
-**Last Updated**: October 1, 2025 - 4:00AM  
-**Status**: Current Active Deployments - **Explicit ID Tracking Implemented**
+**Last Updated**: October 2, 2025 - 10:00AM  
+**Status**: Current Active Deployments - **Cross-Chain Job Flow Completed & NOWJC Updated**
 
 ## Core Contracts
 
@@ -16,7 +16,9 @@
 | **Native Athena** | Arbitrum Sepolia | Implementation (Previous) | `0x16660074684B6217247f45268B680c4Be890a2bd` | ✅ **Production CCTP - 27-Sep** |
 | **Native Athena** | Arbitrum Sepolia | Implementation (Previous) | `0x91Dce45efeFeD9D6146Cda4875b18ec57dAb2E90` | ✅ **Genesis Fix - 25-Sep** |
 | **NOWJC** | Arbitrum Sepolia | Proxy | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | ✅ Active |
-| **NOWJC** | Arbitrum Sepolia | Implementation | `0x324A012c2b853F98cd557648b06400502b69Ef04` | ✅ **CCTP Integration - 25-Sep** |
+| **NOWJC** | Arbitrum Sepolia | Implementation | `0x7fE2799dD9d10D218F8bABf9195BD75ec51958B7` | ✅ **Fixed setJobApplication Signature - 02-Oct** |
+| **NOWJC** | Arbitrum Sepolia | Implementation (Previous) | `0xa7190077d51A40d0a61c6C346F76cD0135430551` | ✅ **Intermediate CCTP Fix - 02-Oct** |
+| **NOWJC** | Arbitrum Sepolia | Implementation (Previous) | `0x324A012c2b853F98cd557648b06400502b69Ef04` | ✅ **CCTP Integration - 25-Sep** |
 | **Native Bridge** | Arbitrum Sepolia | Contract | `0xD3614cF325C3b0c06BC7517905d14e467b9867A8` | ✅ **NEW - ApplyToJob Fix - 30-Sep** |
 | **Native Bridge** | Arbitrum Sepolia | Contract (Previous) | `0x029d3ad51cA5D56f37f4102c47Be1b50609bEa41` | ✅ **DisputedAmount Fix - 30-Sep** |
 | **Enhanced Native Bridge** | Arbitrum Sepolia | Contract (Previous) | `0xAe02010666052571E399b1fe9E2c39B37A3Bc3A7` | ✅ Original Version |
@@ -69,7 +71,7 @@
 | **Native DAO** | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | `NativeDAO` |
 | **UUPS Proxy** | `src/openwork-full-contract-suite-layerzero+CCTP/proxy.sol` | `UUPSProxy` |
 | **Native Athena** | `src/current/New working contracts - 26 sep/native-athena-production-cctp.sol` | `NativeAthenaProductionCCTP` |
-| **NOWJC** | `src/current/testable-athena/nowjc-minimal-dispute-interface-fixed.sol` | `NativeOpenWorkJobContract` |
+| **NOWJC** | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | `NativeOpenWorkJobContract` |
 | **Enhanced Native Bridge** | `src/current/unlocking unique contracts 19 sep/native-bridge-final-unlocking.sol` | `NativeChainBridge` |
 
 ## Test Wallets
@@ -78,12 +80,28 @@
 |------|---------|---------|
 | **WALL2** | `0xfD08836eeE6242092a9c869237a8d122275b024A` | Job Giver |
 | **WALL1** | `0xaA6816876280c5A685Baf3D9c214A092c7f3F6Ef` | Job Applicant |
+| **WALL3** | `0x1D06bb4395AE7BFe9264117726D069C251dC27f5` | Job Applicant (Cross-Chain) |
 
 ---
 
 **Note**: Native Athena has enhanced dispute resolution with cross-chain fund release and **Genesis struct interface fix** (25-Sep). NOWJC uses proven working implementation for CCTP disputed funds functionality. Enhanced Native Bridge provides cross-chain payment routing capabilities.
 
 ## Recent Updates
+
+### October 2, 2025 - Complete Cross-Chain Job Flow & NOWJC setJobApplication Fix ✅
+- **NOWJC Implementation**: `0x7fE2799dD9d10D218F8bABf9195BD75ec51958B7` - Deploy TX: `0xedf44dd3b3b78231d7dd8803b11520350cd592f05849c02f34ba654dd4206689`
+- **Proxy Upgrade**: TX `0x1f40804f67011f10c1b746e6936d8167636de3ef012a77bd33f41e10c1f77f75`
+- **Source File**: `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol`
+- **Fix Applied**: Updated `setJobApplication` interface to include `preferredPaymentChainDomain` and `preferredPaymentAddress` parameters
+- **Complete Flow Tested**: 
+  - Job Posted: `40232-89` (TX: `0x6370ef8292e024940ba01b76411012411e12ea90f08c5364f2dc8f39677d9625`)
+  - Cross-Chain Application: WALL3 OP Sepolia → Arbitrum (TX: `0xfc36ca7f100293dea0acb0553cceee76cb7f40a698cc49da4821721a50de80f8`)
+  - Job Started with CCTP: OP → Arbitrum (TX: `0xc1dae583ac0d1681605b2387619b053f3dc076bb50fd436a77c98052c8917a86`)
+  - Work Submitted: WALL3 (TX: `0xafabef6549a418da383fa1f98ef3ad24233856633addfe1082f4bf6b367f303f`)
+  - Payment Released: Cross-chain Arbitrum → OP (TX: `0x348d1f65ffab450339e5dc95d1243b58c799a6cfa7fce2414c937c322da8dacf`)
+  - CCTP Completion: WALL3 received 0.49995 USDC directly (TX: `0xea0abf701997f46239cb58c870a44245997a95a8ac917af7fdef2cb482fc95f0`)
+- **Status**: ✅ **Full cross-chain job lifecycle operational with direct USDC payments to applicant wallets**
+- **Previous Implementation**: `0xa7190077d51A40d0a61c6C346F76cD0135430551` (intermediate CCTP fix)
 
 ### October 1, 2025 - AskAthena Explicit ID Tracking Implementation ✅
 - **Genesis Contract**: `0xB4f27990af3F186976307953506A4d5759cf36EA` - Deploy TX: `0x1a837ed54caeca6ec5a99ccb997c6121400b27098c539d51cb1f8cf03b9fe457`
