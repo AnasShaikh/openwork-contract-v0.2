@@ -114,7 +114,21 @@ source .env && cast call 0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd "votingPerio
 source .env && cast send 0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd "updateVotingPeriod(uint256)" 1 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
 ```
 
-#### Step 2.2: Fund Native Athena Contract
+#### Step 2.2: Update CCTP Recipient in Athena Client
+
+**CRITICAL**: Update Athena Client to route CCTP fees to the new Native Athena proxy
+
+```bash
+# Check current CCTP recipient
+source .env && cast call 0x45E51B424c87Eb430E705CcE3EcD8e22baD267f7 "nativeAthenaRecipient()" --rpc-url $OPTIMISM_SEPOLIA_RPC_URL
+
+# Update to new Native Athena proxy
+source .env && cast send 0x45E51B424c87Eb430E705CcE3EcD8e22baD267f7 "setNativeAthenaRecipient(address)" 0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd --rpc-url $OPTIMISM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+```
+
+**Result**: TX `0x2e6bbc85dc2c708741cbbf6ab94d9b84fae88f2b641af698b327265e3bcabe00`
+
+#### Step 2.3: Fund Native Athena Contract
 
 ```bash
 # Send USDC to Native Athena for fee distribution
@@ -235,6 +249,7 @@ source .env && cast call 0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d "balanceOf(a
 |-------|------------------|---------|------------|
 | **Contract Deployment** | `0x05d74c3e913653181d0d55d3a8afe72cc1c87f79ae3ccf8670ff9f20182bb5ae` | ✅ | New implementation deployed |
 | **Contract Upgrade** | `0x9207c11e75e7b5ba20c45cfb83b7873a104c56964829f953968778d48521f3c8` | ✅ | Proxy upgraded with enhanced events |
+| **CCTP Recipient Update** | `0x2e6bbc85dc2c708741cbbf6ab94d9b84fae88f2b641af698b327265e3bcabe00` | ✅ | CCTP fees routed to new proxy |
 | **USDC Approval** | `0xc81c95014b33129f32a9c3c7e4019cfa89a7d7ebb40a87c93aff3f3e98ca73c7` | ✅ | USDC approved for Athena Client |
 | **Skill Submission** | `0x340d3c35ccc73349ab650e789090fece61c4cd47b11da001e2c2f385ccc6671a` | ✅ | Skill verification submitted via Athena Client |
 | **Cross-Chain Processing** | `0xc1bedc2d4258707451077a2519db303635005fc2262cde09388c06627ff728b9` | ✅ | Application ID 1001 created with enhanced event |
@@ -253,7 +268,12 @@ source .env && cast call 0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d "balanceOf(a
 **After**: Direct applicationId extraction from event logs  
 **Benefit**: Reduced testing complexity and human error
 
-### 3. Proper Function Usage
+### 3. CCTP Fee Routing Configuration
+**Problem**: CCTP fees still routing to legacy Native Athena proxy  
+**Solution**: Updated `nativeAthenaRecipient` in Athena Client to new proxy  
+**Impact**: All future skill verification fees route to active contract
+
+### 4. Proper Function Usage
 **Correction**: Use `finalizeSkillVerification()` instead of `settleSkillVerification()`  
 **Result**: Successful settlement with proper fee distribution
 
@@ -294,7 +314,12 @@ source .env && cast call 0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d "balanceOf(a
 **Solution**: Enhanced event with applicationId parameter  
 **Usage**: Extract from transaction receipt or event logs
 
-### Issue 3: Authorization Errors
+### Issue 3: CCTP Fee Routing to Wrong Contract
+**Symptoms**: Fees go to legacy proxy instead of new proxy  
+**Root Cause**: Athena Client still configured with old `nativeAthenaRecipient`  
+**Solution**: Update recipient with `setNativeAthenaRecipient(address)` on Athena Client
+
+### Issue 4: Authorization Errors
 **Symptoms**: "Not authorized" errors  
 **Root Cause**: Proxy not authorized in Genesis contract  
 **Solution**: Call `authorizeContract(address,bool)` on Genesis

@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 interface ILocalOpenWorkJobContract {
     enum JobStatus { Open, InProgress, Completed, Cancelled }
     
-   struct MilestonePayment {
+    struct MilestonePayment {
     string descriptionHash;
     uint256 amount;
 }
