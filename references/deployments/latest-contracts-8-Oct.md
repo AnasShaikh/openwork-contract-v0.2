@@ -95,51 +95,55 @@
 
 ## Core Contracts
 
-| Contract | Address | Chain | Deployer | File Path | TX Hash |
-|----------|---------|-------|----------|-----------|---------|
-| **🔥 Native Athena** (Proxy) | `0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-upg-dao-refund-fees-multi-dispute-voting period fix.sol` | `0x421a014a4248507703c36c49066198d559131573e298b6c20505ff127c2f90d1` |
+| Contract | Address | Chain | Deployer | File Path | TX Hash | Verified |
+|----------|---------|-------|----------|-----------|---------|---------|
+| **🔥 Native Athena** (Proxy) | `0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-upg-dao-refund-fees-multi-dispute-voting period fix.sol` | `0x421a014a4248507703c36c49066198d559131573e298b6c20505ff127c2f90d1` | ✅ |
 | **Native Athena (Backup)** (Proxy) | `0x46C17D706c5D5ADeF0831080190627E9bd234C78` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-upg-dao-refund-fees-multi-dispute-voting period fix.sol` | `0xa8db49e451671b1944191e2e651533a944b61da3ba143ccb24c31b48170c3875` |
-| **🔥 Native Athena** (Implementation) | `0x9Ae25Be5f20A61e84ad417673e94d59feE0Ec6A9` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-upg-dao-refund-fees-multi-dispute-voting period fix.sol` | `0x06924f75ffe41826c3836ef0af93cc6f6596c37f29a14329ae97830a4e9f27f7` |
+| **🔥 Native Athena** (Implementation) | `0xf360c9a73536a1016d1d35f80f2333a16fb2a4d2` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-athena.sol` | - | ✅ |
 | **Native Athena (Legacy)** (Proxy) | `0xedeb7729F5E62192FC1D0E43De0ee9C7Bd5cbFBE` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-refund-fees-multi-dispute-voting period fix.sol` | - |
 | **Native Athena (Legacy)** (Implementation) | `0x4D32ad58f769C96dA500b1f481D9A00Bac528acA` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-refund-fees-multi-dispute-voting period fix.sol` | `0x421748b7e4b779a9e42936644d3a467361654cb3a0a1543d5bc88484a771cbd4` |
-| **Oracle Manager** (Proxy) | `0x70F6fa515120efeA3e404234C318b7745D23ADD4` | Arbitrum Sepolia | WALL2 | - | - |
-| **Oracle Manager** (Implementation) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | Arbitrum Sepolia | WALL2 | - | - |
-| **NOWJC** (Proxy) | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | - |
-| **NOWJC** (Implementation) | `0x7398476bC21cb9A0D751b63ECc5a76Ce1d2977Ff` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | `0x9b104620fd527c7c5493234e73564a9385d90117b29eb5bd848b490e7f9f6aaf` |
+| **Oracle Manager** (Proxy) | `0x70F6fa515120efeA3e404234C318b7745D23ADD4` | Arbitrum Sepolia | WALL2 | - | - | ✅ |
+| **Oracle Manager** (Implementation) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | Arbitrum Sepolia | WALL2 | - | - | ✅ |
+| **NOWJC** (Proxy) | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | - | ✅ |
+| **NOWJC** (Implementation) | `0x44fb5fD2d48473347715FD1133b55de27B87647F` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /nowjc.sol` | - | ✅ |
 | **Native Bridge** (Legacy) | `0xD3614cF325C3b0c06BC7517905d14e467b9867A8` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-bridge.sol` | `0xce43247868f68aef1f7af0ed750e47530867d7338174e391e0db43606cd0d400` |
-| **🔥 Native Bridge** (Working) | `0x3b2AC1d1281cA4a1188d9F09A5Af9a9E6a114D6c` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-bridge-upgrade-fix.sol` | `0x4709221a23d74da3f6ed2a45ceeddfe2a7ad01be5022600268750e32f981bdbc` |
-| **Native DAO** (Proxy) | `0x21451dCE07Ad3Ab638Ec71299C1D2BD2064b90E5` | Arbitrum Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | - |
-| **Native DAO** (Implementation) | `0x86C63B9BB781E01a1F3704d0Be7cb2b6A9B2d2eB` | Arbitrum Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | - |
-| **Native Rewards** | `0x1e6c32ad4ab15acd59c66fbcdd70cc442d64993e` | Arbitrum Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/native-rewards-final.sol` | - |
-| **Genesis Contract** | `0xB4f27990af3F186976307953506A4d5759cf36EA` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/openwork-genesis.sol` | `0x1a837ed54caeca6ec5a99ccb997c6121400b27098c539d51cb1f8cf03b9fe457` |
+| **🔥 Native Bridge** (Working) | `0x3b2AC1d1281cA4a1188d9F09A5Af9a9E6a114D6c` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-bridge-upgrade-fix.sol` | `0x4709221a23d74da3f6ed2a45ceeddfe2a7ad01be5022600268750e32f981bdbc` | ✅ |
+| **Native DAO** (Proxy) | `0x21451dCE07Ad3Ab638Ec71299C1D2BD2064b90E5` | Arbitrum Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | - | ✅ |
+| **Native DAO** (Implementation) | `0x18d2eC7459eFf0De9495be21525E0742890B5065` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-dao.sol` | - | ✅ |
+| **Native Rewards** (Proxy) | `0x1e6c32ad4ab15acd59c66fbcdd70cc442d64993e` | Arbitrum Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/native-rewards-final.sol` | - | ✅ |
+| **Native Rewards** (Implementation) | `0x91852bbe9D41F329D1641C0447E0c2405825a95E` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-rewards.sol` | - | ✅ |
+| **Genesis Contract** | `0xB4f27990af3F186976307953506A4d5759cf36EA` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /openwork-genesis.sol` | `0x1a837ed54caeca6ec5a99ccb997c6121400b27098c539d51cb1f8cf03b9fe457` | ✅ |
+| **🔥 OpenWork Contract Registry** | `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` | Arbitrum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /openwork-contract-registry.sol` | `0xfac8d64b783c3de1ff853cd88e97c8a7c64e3ce3e378202de98d363dae451cf2` | ✅ |
 
 ## Local Chain Contracts
 
-| Contract | Address | Chain | Deployer | File Path | TX Hash |
-|----------|---------|-------|----------|-----------|---------|
-| **LOWJC** (Proxy) | `0x896a3Bc6ED01f549Fe20bD1F25067951913b793C` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/lowjc.sol` | - |
-| **LOWJC** (Implementation) | `0x1aF480964b074Ca8bae0c19fb0DED4884a459f14` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/lowjc.sol` | `0x41ed121906a431fbd8858e706b633dd326dff722d9ce683d606ba281f342a12a` |
+| Contract | Address | Chain | Deployer | File Path | TX Hash | Verified |
+|----------|---------|-------|----------|-----------|---------|---------|
+| **LOWJC** (Proxy) | `0x896a3Bc6ED01f549Fe20bD1F25067951913b793C` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/lowjc.sol` | - | ✅ |
+| **LOWJC** (Implementation) | `0x2eb97f2bb35f8f5b5d31090e9ef1915aaa431966` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /lowjc.sol` | - | ✅ |
 | **Local Bridge** (Legacy) | `0xaff9967c6000ee6feec04d29a39cc7a4ecff4bc0` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/local-bridge.sol` | - |
-| **🔥 Local Bridge** (Working) | `0x6601cF4156160cf43fd024bac30851d3ee0F8668` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/local-bridge-upgrade-fix.sol` | `0xc88c8af5f1bc1e785d902b60bd9d928f8ccdefa802697abdbf6708edfe5cdcaa` |
-| **Athena Client** (Proxy) | `0x45E51B424c87Eb430E705CcE3EcD8e22baD267f7` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | - |
-| **Athena Client** (Implementation) | `0xBccbf9633a42ACF4213a95f17B844B27408b2A21` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xf3b409b0f4df77263d77c764f8b94d757659e75cca917514d8adefa815b31fba` |
+| **🔥 Local Bridge** (Working) | `0x6601cF4156160cf43fd024bac30851d3ee0F8668` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/local-bridge-upgrade-fix.sol` | `0xc88c8af5f1bc1e785d902b60bd9d928f8ccdefa802697abdbf6708edfe5cdcaa` | ✅ |
+| **Athena Client** (Proxy) | `0x45E51B424c87Eb430E705CcE3EcD8e22baD267f7` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | - | ✅ |
+| **Athena Client** (Implementation) | `0xBccbf9633a42ACF4213a95f17B844B27408b2A21` | OP Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xf3b409b0f4df77263d77c764f8b94d757659e75cca917514d8adefa815b31fba` | ✅ |
 | **LOWJC** (Proxy) | `0x325c6615Caec083987A5004Ce9110f932923Bd3A` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/lowjc.sol` | - |
-| **LOWJC** (Implementation) | `0xE99B5baB1fc02EbD6f1e4a3789079381a40cddD0` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/lowjc.sol` | `0xe448bb94fd036eefc0ed3a65802e3c7d0351e212dfcc7eabee1832d942709d4c` |
-| **🔥 Local Bridge** (Working) | `0xa47e34C6FAb67f9489D22531f2DD572006058ae7` | Ethereum Sepolia | WALL2 | - | - |
-| **Athena Client** (Proxy) | `0xAdE5F9637F1DB4D6773fA49bE43Bc2480040E0dB` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xd7518f53694aea37120d447d01a2ab65645c6a65bda4182eeffdb6ce6eb25bb1` |
-| **Athena Client** (Implementation) | `0xFd59109B4d45bAC4FF649C836C1204CE0D249294` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xed2100165767fc1e56488e7a69fe48ed7020a1eb4af3d7c114f7e2e021fa5019` |
+| **LOWJC** (Implementation) | `0x0ED13e09658bA8F5D4E6e9bEc1677eA3ecB646A1` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /lowjc.sol` | `0xf92f4c7078b76805728d2e0d00361eb98f50812896d45ef17844798570817444` | ✅ |
+| **🔥 Local Bridge** (Working) | `0xA7B5EAE830D62E9824612080D3Abf94Ee3600B76` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /local-bridge.sol` | `0xc703aa12e3de9667c7401c43068bdc25c4df5b4fdca6e0b4fd92998ab848c7cd` | ✅ |
+| **🔥 Athena Client** (Proxy) | `0x23300f3816eE2eabB1f1dCBeE087233A67818B5d` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /athena-client.sol` | `0xd21ab96ad5c279f5bae047aa0843cb8284c8e839660f9efd5a32986a5d50bcb7` | ✅ |
+| **🔥 Athena Client** (Implementation) | `0xC44177cB6a8a45ff83556Cda60Be73e3f77E854c` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /athena-client.sol` | `0x4b7c78945d4fa99db2de1e553289f0eb01b81056a0decdc9cdccbce19d9dec57` | ✅ |
+| **Athena Client (Legacy)** (Proxy) | `0xAdE5F9637F1DB4D6773fA49bE43Bc2480040E0dB` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xd7518f53694aea37120d447d01a2ab65645c6a65bda4182eeffdb6ce6eb25bb1` |
+| **Athena Client (Legacy)** (Implementation) | `0xFd59109B4d45bAC4FF649C836C1204CE0D249294` | Ethereum Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/athena-client.sol` | `0xed2100165767fc1e56488e7a69fe48ed7020a1eb4af3d7c114f7e2e021fa5019` |
 
 ## Main Chain Contracts
 
-| Contract | Address | Chain | Deployer | File Path | TX Hash |
-|----------|---------|-------|----------|-----------|---------|
-| **OpenWork Token (OW)** | `0x5f24747d5e59F9CCe5a9815BC12E2fB5Ae713679` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/openwork-token.sol` | `0x21c2b66d7b56430f636c9f909fc8707aa40d6aae65f6f6009aa74cdb0c69a3d3` |
-| **Main Chain Bridge** | `0x70d30e5dAb5005b126C040f1D9b0bDDBc16679b0` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-chain-bridge-final.sol` | `0x79b61edff6e7a417fffa2e70ea5434fd5cb7c3ff1dc989655af396a600bf9ed0` |
-| **🔥 Cross-Chain Rewards** (Proxy) | `0xd6bE0C187408155be99C4e9d6f860eDDa27b056B` | Base Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/main-rewards.sol` | - |
-| **🔥 Cross-Chain Rewards** (Implementation) | `0x58c1EA0d278252e8F48C46F470b601FcbF779346` | Base Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/main-rewards.sol` | `0x7df0fbb48700398804240f86c1181735b83b001a73474c386b86da7829331889` |
+| Contract | Address | Chain | Deployer | File Path | TX Hash | Verified |
+|----------|---------|-------|----------|-----------|---------|---------|
+| **OpenWork Token (OW)** | `0x5f24747d5e59F9CCe5a9815BC12E2fB5Ae713679` | Base Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /openwork-token.sol` | `0x21c2b66d7b56430f636c9f909fc8707aa40d6aae65f6f6009aa74cdb0c69a3d3` | ✅ |
+| **Main Chain Bridge** | `0x70d30e5dAb5005b126C040f1D9b0bDDBc16679b0` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-chain-bridge-final.sol` | `0x79b61edff6e7a417fffa2e70ea5434fd5cb7c3ff1dc989655af396a600bf9ed0` | ✅ |
+| **🔥 Cross-Chain Rewards** (Proxy) | `0xd6bE0C187408155be99C4e9d6f860eDDa27b056B` | Base Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/main-rewards.sol` | - | ✅ |
+| **🔥 Cross-Chain Rewards** (Implementation) | `0x58c1EA0d278252e8F48C46F470b601FcbF779346` | Base Sepolia | WALL2 | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/main-rewards.sol` | `0x7df0fbb48700398804240f86c1181735b83b001a73474c386b86da7829331889` | ✅ |
 | **Cross-Chain Rewards (Legacy)** (Implementation) | `0x55a0FE495c61d36F4Ac93D440DD13d146fb68f53` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-rewards-final.sol` | `0xb4a7c021669c436a828b4e67757f6e0eb66bde2cbab0095d74760b03c892d5b2` |
-| **Main DAO** (Proxy) | `0xc3579BDC6eC1fAad8a67B1Dc5542EBcf28456465` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | `0x3d110d32eae8ef68244de5455751f166f0e09b5e0fc1c2fcdb86586e9c10ef99` |
-| **Main DAO** (Implementation) | `0xbde733D64D8C2bcA369433E7dC96DC3ecFE414e4` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | `0x62935cac5f3d411f9d9081e45216e0a2b9b09de6372817b85208d9dacb655d7a` |
+| **Main DAO** (Proxy) | `0xc3579BDC6eC1fAad8a67B1Dc5542EBcf28456465` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | `0x3d110d32eae8ef68244de5455751f166f0e09b5e0fc1c2fcdb86586e9c10ef99` | ✅ |
+| **Main DAO** (Implementation) | `0xbde733D64D8C2bcA369433E7dC96DC3ecFE414e4` | Base Sepolia | WALL2 | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | `0x62935cac5f3d411f9d9081e45216e0a2b9b09de6372817b85208d9dacb655d7a` | ✅ |
 
 ## Infrastructure
 
@@ -148,7 +152,9 @@
 | **USDC Token** | `0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d` | Arbitrum Sepolia | Native chain USDC |
 | **USDC Token** | `0x5fd84259d66cd46123540766be93dfe6d43130d7` | OP Sepolia | Local chain USDC |
 | **USDC Token** | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | Ethereum Sepolia | Local chain USDC |
-| **CCTP Transceiver** | `0xB64f20A20F55D77bbe708Db107AA5E53a9e39063` | Arbitrum Sepolia | Cross-chain USDC |
+| **CCTP Transceiver** | `0xB64f20A20F55D77bbe708Db107AA5E53a9e39063` | Arbitrum Sepolia | Cross-chain USDC | ✅ |
+| **CCTP Transceiver** | `0x72d6EfeDdA70f9B4eD3FfF4BDd0844655AEa2bD5` | OP Sepolia | Cross-chain USDC | ✅ |
+| **CCTP Transceiver** | `0x65bf76589B9e9B0768181e7b7B8dB1A2d230091d` | Ethereum Sepolia | Cross-chain USDC | ✅ |
 | **Message Transmitter** | `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` | OP Sepolia | CCTP messaging |
 | **Token Messenger** | `0x72d6efedda70f9b4ed3fff4bdd0844655aea2bd5` | OP Sepolia | CCTP sender |
 
