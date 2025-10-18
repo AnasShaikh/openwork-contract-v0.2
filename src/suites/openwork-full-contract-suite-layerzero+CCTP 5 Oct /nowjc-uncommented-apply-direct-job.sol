@@ -545,6 +545,7 @@ contract NativeOpenWorkJobContract is
 
     // ==================== JOB MANAGEMENT FUNCTIONS ====================
     
+    /* COMMENTED OUT TO SAVE CONTRACT SIZE - Use Genesis directly for profiles
     function createProfile(address _user, string memory _ipfsHash, address _referrerAddress) external {
         require(!genesis.hasProfile(_user), "Profile exists");
 
@@ -554,8 +555,9 @@ contract NativeOpenWorkJobContract is
         genesis.setProfile(_user, _ipfsHash, _referrerAddress);
         emit ProfileCreated(_user, _ipfsHash, _referrerAddress);
     }
+    */
     
-    function getProfile(address _user) public view returns (Profile memory) {
+   /* function getProfile(address _user) public view returns (Profile memory) {
         IOpenworkGenesis.Profile memory genesisProfile = genesis.getProfile(_user);
         return Profile({
             userAddress: genesisProfile.userAddress,
@@ -563,7 +565,7 @@ contract NativeOpenWorkJobContract is
             referrerAddress: genesisProfile.referrerAddress,
             portfolioHashes: genesisProfile.portfolioHashes
         });
-    }
+    }*/
     
     function postJob(string memory _jobId, address _jobGiver, string memory _jobDetailHash, string[] memory _descriptions, uint256[] memory _amounts) external {
         require(!genesis.jobExists(_jobId), "Job exists");
@@ -604,9 +606,9 @@ contract NativeOpenWorkJobContract is
     }
     
     function applyToJob(address _applicant, string memory _jobId, string memory _applicationHash, string[] memory _descriptions, uint256[] memory _amounts, uint32 _preferredChainDomain) external {
-        require(_descriptions.length == _amounts.length, "Length mismatch");
+      require(_descriptions.length == _amounts.length, "Length mismatch");
         
-       IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
+      IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         for (uint i = 0; i < job.applicants.length; i++) {
             require(job.applicants[i] != _applicant, "Already applied");
         }
@@ -619,6 +621,58 @@ contract NativeOpenWorkJobContract is
         jobApplicantChainDomain[_jobId][_applicant] = _preferredChainDomain;
         
         emit JobApplication(_jobId, applicationId, _applicant, _applicationHash);
+    }
+    
+    function handleStartDirectContract(
+        address _jobGiver,
+        address _jobTaker,
+        string memory _jobId,
+        string memory _jobDetailHash,
+        string[] memory _descriptions,
+        uint256[] memory _amounts,
+        uint32 _jobTakerChainDomain
+    ) external {
+        require(msg.sender == bridge, "Only bridge can call");
+        require(!genesis.jobExists(_jobId), "Job already exists");
+        require(_descriptions.length == _amounts.length, "Length mismatch");
+        require(_descriptions.length > 0, "Must have milestones");
+        
+        // 1. Create job in Genesis
+        genesis.setJob(_jobId, _jobGiver, _jobDetailHash, _descriptions, _amounts);
+        
+        // 2. Create auto-application in Genesis
+      genesis.addJobApplicant(_jobId, _jobTaker);
+        
+       uint256 applicationId = 1;
+       genesis.setJobApplication(
+            _jobId,
+            applicationId,
+            _jobTaker,
+            "direct-contract-auto-application",
+            _descriptions,
+            _amounts,
+            _jobTakerChainDomain,
+            _jobTaker
+        );
+        
+        // Store applicant's preferred chain for dispute resolution
+        jobApplicantChainDomain[_jobId][_jobTaker] = _jobTakerChainDomain;
+        
+        // 3. Select applicant & start job
+        genesis.setJobSelectedApplicant(_jobId, _jobTaker, applicationId);
+        genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.InProgress);
+        genesis.setJobCurrentMilestone(_jobId, 1);
+        
+         // 4. Set final milestones (use job giver's milestones)
+        for (uint i = 0; i < _descriptions.length; i++) {
+            genesis.addJobFinalMilestone(_jobId, _descriptions[i], _amounts[i]);
+        }
+        
+     // 5. Emit events
+        emit JobPosted(_jobId, _jobGiver, _jobDetailHash);
+        emit JobApplication(_jobId, applicationId, _jobTaker, "direct-contract-auto-application");
+        emit JobStarted(_jobId, applicationId, _jobTaker, false);
+        emit JobStatusChanged(_jobId, JobStatus.InProgress);
     }
     
     function startJob(address /* _jobGiver */, string memory _jobId, uint256 _applicationId, bool _useApplicantMilestones) external {
@@ -643,7 +697,7 @@ contract NativeOpenWorkJobContract is
         emit JobStatusChanged(_jobId, JobStatus.InProgress);
     }
     
-    function getApplication(string memory _jobId, uint256 _applicationId) public view returns (Application memory) {
+  /*  function getApplication(string memory _jobId, uint256 _applicationId) public view returns (Application memory) {
         require(genesis.getJobApplicationCount(_jobId) >= _applicationId, "App not exist");
         IOpenworkGenesis.Application memory genesisApp = genesis.getJobApplication(_jobId, _applicationId);
         return Application({
@@ -653,7 +707,7 @@ contract NativeOpenWorkJobContract is
             applicationHash: genesisApp.applicationHash,
             proposedMilestones: _convertMilestones(genesisApp.proposedMilestones)
         });
-    }
+    }*/
     
     function submitWork(address _applicant, string memory _jobId, string memory _submissionHash) external {
         genesis.addWorkSubmission(_jobId, _submissionHash);
@@ -788,6 +842,7 @@ contract NativeOpenWorkJobContract is
         emit PaymentReleasedAndNextMilestoneLocked(_jobId, _releasedAmount, _lockedAmount, job.currentMilestone);
     }
     
+    /* COMMENTED OUT TO SAVE CONTRACT SIZE - Use Genesis directly for ratings
     function rate(address _rater, string memory _jobId, address _userToRate, uint256 _rating) external {
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         bool isAuthorized = false;
@@ -803,11 +858,14 @@ contract NativeOpenWorkJobContract is
         genesis.setJobRating(_jobId, _userToRate, _rating);
         emit UserRated(_jobId, _rater, _userToRate, _rating);
     }
+    */
 
+    /* COMMENTED OUT TO SAVE CONTRACT SIZE - Use Genesis directly for portfolio
     function addPortfolio(address _user, string memory _portfolioHash) external {
         genesis.addPortfolio(_user, _portfolioHash);
         emit PortfolioAdded(_user, _portfolioHash);
     }
+    */
 
     // ==================== BRIDGE INTEGRATION ====================
 
@@ -830,7 +888,7 @@ contract NativeOpenWorkJobContract is
     emit RewardsDataSynced(msg.sender, 1, claimableAmount, 0); // Simplified event
     }
     
-    function getRating(address _user) public view returns (uint256) {
+  /*  function getRating(address _user) public view returns (uint256) {
         uint256[] memory ratings = genesis.getUserRatings(_user);
         if (ratings.length == 0) {
             return 0;
@@ -842,12 +900,13 @@ contract NativeOpenWorkJobContract is
         }
         
         return totalRating / ratings.length;
-    }
+    }*/
     
     // ==================== VIEW FUNCTIONS ====================
     
     // Add these to the VIEW FUNCTIONS section
     
+    /* COMMENTED OUT TO SAVE CONTRACT SIZE - Profile view functions
     function getProfileCount() external view returns (uint256) {
             return profileCount;
         }
@@ -867,7 +926,8 @@ contract NativeOpenWorkJobContract is
     function getAllProfileUsers() external view returns (address[] memory) {
         return allProfileUsers;
     }
-    function getJobCount() external view returns (uint256) {
+    */
+  /*  function getJobCount() external view returns (uint256) {
         return genesis.getJobCount();
     }
     
@@ -886,9 +946,9 @@ contract NativeOpenWorkJobContract is
     function isJobOpen(string memory _jobId) external view returns (bool) {
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         return job.status == IOpenworkGenesis.JobStatus.Open;
-    }
+    }*/
     
-    function getJobStatus(string memory _jobId) external view returns (JobStatus) {
+  /*  function getJobStatus(string memory _jobId) external view returns (JobStatus) {
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         return JobStatus(uint8(job.status));
     }
@@ -909,7 +969,7 @@ contract NativeOpenWorkJobContract is
         uint256 balance = usdtToken.balanceOf(address(this));
         require(balance > 0, "No balance");
         usdtToken.safeTransfer(owner(), balance);
-    }
+    }*/
     
     function setUSDTToken(address _newToken) external onlyOwner {
         require(_newToken != address(0), "Invalid address");

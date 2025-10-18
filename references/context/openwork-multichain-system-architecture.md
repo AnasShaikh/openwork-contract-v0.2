@@ -41,6 +41,7 @@ The OpenWork protocol is a sophisticated multi-chain decentralized freelancing p
 - **Genesis** - Core data storage contract
 - **Native DAO** - Local governance with earned token voting power
 - **NOWJC** - Native OpenWork Job Contract (job coordination hub)
+- **ProfileManager** - User profile and rating management (UUPS upgradeable)
 - **Native Athena** - Decentralized dispute resolution system
 - **Native Rewards** - Local rewards calculation and distribution
 - **CCTP Transceiver** - Cross-chain USDC payment processing
@@ -130,6 +131,11 @@ graph TB
 - **Local → Native**: Dispute initiation, evidence submission
 - **Native → Local**: Dispute outcomes, fund releases
 
+#### **5. Profile & Rating Messages**
+- **Local → Native**: Profile creation, portfolio additions, user ratings
+- **ProfileManager**: Manages all user profile data, stores in Genesis contract
+- **Native → Local**: Profile confirmations
+
 ---
 
 ## 💰 **Payment & Token Flow**
@@ -201,6 +207,7 @@ Staked Tokens (Main) + Earned Tokens (Native) = Combined Voting Power
 |---------------|--------------|------------------|------------|------------------|
 | **DAO** | Main DAO ✅ | Native DAO ✅ | ❌ | ❌ |
 | **Job Contract** | ❌ | NOWJC ✅ | LOWJC ✅ | LOWJC ✅ |
+| **ProfileManager** | ❌ | ProfileManager ✅ | ❌ | ❌ |
 | **Dispute System** | ❌ | Native Athena ✅ | Athena Client ✅ | Athena Client ✅ |
 | **Rewards** | Main Rewards ✅ | Native Rewards ⚠️ | ❌ | ❌ |
 | **Bridge** | Main Bridge ✅ | Native Bridge ✅ | Local Bridge ✅ | Local Bridge ✅ |

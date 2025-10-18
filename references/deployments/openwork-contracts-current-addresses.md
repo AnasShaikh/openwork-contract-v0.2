@@ -1,6 +1,6 @@
 # OpenWork System - Current Contract Addresses
 
-**Last Updated**: October 9, 2025  
+**Last Updated**: October 17, 2025  
 **Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)  
 **Standard Deployer**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
 
@@ -21,6 +21,13 @@
 | **Native Rewards** (Implementation) | `0x91852bbe9D41F329D1641C0447E0c2405825a95E` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-rewards.sol` | ✅ |
 | **Genesis Contract** | `0xB4f27990af3F186976307953506A4d5759cf36EA` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /openwork-genesis.sol` | ✅ |
 | **Contract Registry** | `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /openwork-contract-registry.sol` | ✅ |
+| **New Native Bridge** | `0xd0b987355d7Bb6b1bC45C21b74F9326f239e9cfA` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-bridge-direct-job.sol` | ⚠️ (OLD) |
+| **Native Bridge with ProfileManager** | `0x0422757839F37dcC1652b10843A5Ca1992489ADe` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-bridge-profile-manager.sol` | ✅ |
+| **DirectContractManager** (Simple) | `0xa53B51eE6a66f1840935929a471B6E8B49C5f842` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /direct-contract-manager-simple.sol` | ⚠️ |
+| **DirectContractManager** (Implementation) | `0x022AF2f70b3Eb0b09ab9410D023Bc05492989b76` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /direct-contract-manager.sol` | ⚠️ |
+| **DirectContractManager** (Proxy) | `0xB5612e59C99ECd4BE9D5A8ee0fC1C513575CA238` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /proxy.sol` | ⚠️ |
+| **ProfileManager** (Implementation) | `0xB8C558B44f525212DD4895Aec614ED28ee344dd1` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /profile-manager.sol` | ⚠️ |
+| **ProfileManager** (Proxy) | `0xFc4dA60Ea9D88B81a894CfbD5941b7d0E3fEe401` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /proxy.sol` | ⚠️ |
 
 ## OP Sepolia (Local Chain)
 
@@ -76,5 +83,25 @@ ContractInfo[] memory contracts = IOpenworkRegistry(0x8AbC0E626A8fC723ec6f27FE8a
 ContractInfo memory contract = IOpenworkRegistry(0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D).getContract("Native Athena Proxy");
 ```
 
-**Total Contracts**: 22 contracts across 4 chains  
+**Total Contracts**: 26 contracts across 4 chains  
 **All deployed by**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
+
+## Direct Contract Feature (October 17, 2025)
+
+**Latest Deployment**: UUPS DirectContractManager with cross-chain orchestration capability
+
+### **Feature Components**:
+- **New Native Bridge**: Routes "startDirectContract" messages to DirectContractManager
+- **DirectContractManager (Simple)**: Non-UUPS version for testing
+- **DirectContractManager (UUPS)**: Production-ready upgradeable version
+- **Updated LOWJC**: Includes `startDirectContract()` function
+
+### **Cross-Chain Flow**:
+```
+LOWJC (OP Sepolia) → LayerZero → New Native Bridge (Arbitrum) → DirectContractManager → NOWJC
+```
+
+### **Authorization Requirements**:
+- DirectContractManager authorized in NOWJC: ✅
+- DirectContractManager authorized in Genesis: ✅
+- Bridge addresses configured correctly: ✅
