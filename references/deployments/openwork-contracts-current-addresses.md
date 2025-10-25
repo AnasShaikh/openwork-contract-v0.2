@@ -1,6 +1,6 @@
 # OpenWork System - Current Contract Addresses
 
-**Last Updated**: October 22, 2025  
+**Last Updated**: October 25, 2025  
 **Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)  
 **Standard Deployer**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
 
@@ -13,7 +13,8 @@
 | **Oracle Manager** (Proxy) | `0x70F6fa515120efeA3e404234C318b7745D23ADD4` | - | ✅ |
 | **Oracle Manager** (Implementation) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | - | ✅ |
 | **NOWJC** (Proxy) | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | ✅ |
-| **NOWJC** (Implementation) | `0x9774723857b2bc0e3c353f6d0bb8b90f6e181604` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /nowjc-uncommented-apply-direct-job.sol` | ✅ |
+| **NOWJC** (Implementation - Commission) | `0x2F4Da95c8b84447605809a38f3a5a42CbCEeE885` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | ✅ |
+| **NOWJC** (Previous Implementation) | `0x9774723857b2bc0e3c353f6d0bb8b90f6e181604` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /nowjc-uncommented-apply-direct-job.sol` | 🔄 |
 | **Native Bridge** | `0x3b2AC1d1281cA4a1188d9F09A5Af9a9E6a114D6c` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-bridge-upgrade-fix.sol` | ✅ |
 | **Native DAO** (Proxy) | `0x21451dCE07Ad3Ab638Ec71299C1D2BD2064b90E5` | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | ✅ |
 | **Native DAO** (Implementation) | `0x18d2eC7459eFf0De9495be21525E0742890B5065` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-dao.sol` | ✅ |
