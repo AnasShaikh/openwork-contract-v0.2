@@ -138,27 +138,105 @@ contract OpenWorkRewardsContract is
     // ==================== REWARD BANDS INITIALIZATION ====================
     
     function _initializeRewardBands() private {
-        // Job-based reward bands
-        rewardBands.push(RewardBand(0, 500 * 1e6, 100000 * 1e18));
-        rewardBands.push(RewardBand(500 * 1e6, 1000 * 1e6, 50000 * 1e18));
-        rewardBands.push(RewardBand(1000 * 1e6, 2000 * 1e6, 25000 * 1e18));
-        rewardBands.push(RewardBand(2000 * 1e6, 4000 * 1e6, 12500 * 1e18));
-        rewardBands.push(RewardBand(4000 * 1e6, 8000 * 1e6, 6250 * 1e18));
-        rewardBands.push(RewardBand(8000 * 1e6, 16000 * 1e6, 3125 * 1e18));
-        rewardBands.push(RewardBand(16000 * 1e6, 32000 * 1e6, 1562 * 1e18));
-        rewardBands.push(RewardBand(32000 * 1e6, 64000 * 1e6, 781 * 1e18));
-        rewardBands.push(RewardBand(64000 * 1e6, 128000 * 1e6, 391 * 1e18));
-        rewardBands.push(RewardBand(128000 * 1e6, 256000 * 1e6, 195 * 1e18));
-        rewardBands.push(RewardBand(256000 * 1e6, 512000 * 1e6, 98 * 1e18));
-        rewardBands.push(RewardBand(512000 * 1e6, 1024000 * 1e6, 49 * 1e18));
-        rewardBands.push(RewardBand(1024000 * 1e6, 2048000 * 1e6, 24 * 1e18));
-        rewardBands.push(RewardBand(2048000 * 1e6, 4096000 * 1e6, 12 * 1e18));
-        rewardBands.push(RewardBand(4096000 * 1e6, 8192000 * 1e6, 6 * 1e18));
-        rewardBands.push(RewardBand(8192000 * 1e6, 16384000 * 1e6, 3 * 1e18));
-        rewardBands.push(RewardBand(16384000 * 1e6, 32768000 * 1e6, 15 * 1e17));
-        rewardBands.push(RewardBand(32768000 * 1e6, 65536000 * 1e6, 75 * 1e16));
-        rewardBands.push(RewardBand(65536000 * 1e6, 131072000 * 1e6, 38 * 1e16));
-        rewardBands.push(RewardBand(131072000 * 1e6, type(uint256).max, 19 * 1e16));
+        // NEW: 20 reward bands, each distributing 30M OW tokens
+        // Format: minAmount (USDT with 6 decimals), maxAmount, owPerDollar (tokens with 18 decimals per 1 USDT)
+        
+        rewardBands.push(RewardBand(0, 100000 * 1e6, 300 * 1e18));                    // Band 1: $0-$100k
+        rewardBands.push(RewardBand(100000 * 1e6, 200000 * 1e6, 300 * 1e18));         // Band 2: $100k-$200k
+        rewardBands.push(RewardBand(200000 * 1e6, 400000 * 1e6, 150 * 1e18));         // Band 3: $200k-$400k
+        rewardBands.push(RewardBand(400000 * 1e6, 800000 * 1e6, 75 * 1e18));          // Band 4: $400k-$800k
+        rewardBands.push(RewardBand(800000 * 1e6, 1600000 * 1e6, 375 * 1e17));        // Band 5: $800k-$1.6M (37.5)
+        rewardBands.push(RewardBand(1600000 * 1e6, 3200000 * 1e6, 1875 * 1e16));      // Band 6: $1.6M-$3.2M (18.75)
+        rewardBands.push(RewardBand(3200000 * 1e6, 6400000 * 1e6, 9375 * 1e15));      // Band 7: $3.2M-$6.4M (9.375)
+        rewardBands.push(RewardBand(6400000 * 1e6, 12800000 * 1e6, 46875 * 1e14));    // Band 8: $6.4M-$12.8M (4.6875)
+        rewardBands.push(RewardBand(12800000 * 1e6, 25600000 * 1e6, 234375 * 1e13));  // Band 9: $12.8M-$25.6M (2.34375)
+        rewardBands.push(RewardBand(25600000 * 1e6, 51200000 * 1e6, 1171875 * 1e12)); // Band 10: $25.6M-$51.2M (1.171875)
+        rewardBands.push(RewardBand(51200000 * 1e6, 102400000 * 1e6, 5859375 * 1e11)); // Band 11: $51.2M-$102.4M
+        rewardBands.push(RewardBand(102400000 * 1e6, 204800000 * 1e6, 29296875 * 1e10)); // Band 12: $102.4M-$204.8M
+        rewardBands.push(RewardBand(204800000 * 1e6, 409600000 * 1e6, 146484375 * 1e9)); // Band 13: $204.8M-$409.6M
+        rewardBands.push(RewardBand(409600000 * 1e6, 819200000 * 1e6, 732421875 * 1e8)); // Band 14: $409.6M-$819.2M
+        rewardBands.push(RewardBand(819200000 * 1e6, 1638400000 * 1e6, 3662109375 * 1e7)); // Band 15: $819.2M-$1.6384B
+        rewardBands.push(RewardBand(1638400000 * 1e6, 3276800000 * 1e6, 18310546875 * 1e6)); // Band 16: $1.6384B-$3.2768B
+        rewardBands.push(RewardBand(3276800000 * 1e6, 6553600000 * 1e6, 91552734375 * 1e5)); // Band 17: $3.2768B-$6.5536B
+        rewardBands.push(RewardBand(6553600000 * 1e6, 13107200000 * 1e6, 457763671875 * 1e4)); // Band 18: $6.5536B-$13.1072B
+        rewardBands.push(RewardBand(13107200000 * 1e6, 26214400000 * 1e6, 2288818359375 * 1e3)); // Band 19: $13.1072B-$26.2144B
+        rewardBands.push(RewardBand(26214400000 * 1e6, 52428800000 * 1e6, 11444091796875 * 1e2)); // Band 20: $26.2144B-$52.4288B
+    }
+    
+    /**
+     * @dev Reset and reinitialize reward bands (owner only)
+     * Used to fix corrupted storage from failed initialization
+     */
+    function resetRewardBands() external onlyOwner {
+        delete rewardBands;
+        _initializeRewardBands();
+    }
+    
+    // ==================== DYNAMIC BAND MANAGEMENT ====================
+    
+    event RewardBandAdded(uint256 indexed bandIndex, uint256 minAmount, uint256 maxAmount, uint256 owPerDollar);
+    event RewardBandUpdated(uint256 indexed bandIndex, uint256 minAmount, uint256 maxAmount, uint256 owPerDollar);
+    event RewardBandRemoved(uint256 indexed bandIndex);
+    event AllRewardBandsCleared();
+    
+    /**
+     * @dev Add a new reward band to the end of the array
+     * @param minAmount Minimum cumulative platform amount for this band (USDT 6 decimals)
+     * @param maxAmount Maximum cumulative platform amount for this band (USDT 6 decimals)
+     * @param owPerDollar OW tokens awarded per USDT (18 decimals)
+     */
+    function addRewardBand(uint256 minAmount, uint256 maxAmount, uint256 owPerDollar) external onlyOwner {
+        require(maxAmount > minAmount, "Invalid range");
+        require(owPerDollar > 0, "Rate must be positive");
+        
+        // Validate continuity with previous band
+        if (rewardBands.length > 0) {
+            RewardBand memory lastBand = rewardBands[rewardBands.length - 1];
+            require(minAmount >= lastBand.maxAmount, "Gap or overlap with previous band");
+        }
+        
+        rewardBands.push(RewardBand(minAmount, maxAmount, owPerDollar));
+        
+        emit RewardBandAdded(rewardBands.length - 1, minAmount, maxAmount, owPerDollar);
+    }
+    
+    /**
+     * @dev Update an existing reward band
+     * @param index Index of the band to update
+     * @param minAmount New minimum amount
+     * @param maxAmount New maximum amount
+     * @param owPerDollar New reward rate
+     */
+    function updateRewardBand(uint256 index, uint256 minAmount, uint256 maxAmount, uint256 owPerDollar) external onlyOwner {
+        require(index < rewardBands.length, "Invalid band index");
+        require(maxAmount > minAmount, "Invalid range");
+        require(owPerDollar > 0, "Rate must be positive");
+        
+        rewardBands[index] = RewardBand(minAmount, maxAmount, owPerDollar);
+        
+        emit RewardBandUpdated(index, minAmount, maxAmount, owPerDollar);
+    }
+    
+    /**
+     * @dev Remove the last reward band
+     * Safer than removing by index as it doesn't affect other bands
+     */
+    function removeLastRewardBand() external onlyOwner {
+        require(rewardBands.length > 0, "No bands to remove");
+        
+        uint256 removedIndex = rewardBands.length - 1;
+        rewardBands.pop();
+        
+        emit RewardBandRemoved(removedIndex);
+    }
+    
+    /**
+     * @dev Clear all reward bands (use with extreme caution!)
+     * Should only be used for emergency resets
+     */
+    function clearAllRewardBands() external onlyOwner {
+        delete rewardBands;
+        emit AllRewardBandsCleared();
     }
 
     // ==================== BAND CALCULATION FUNCTIONS ====================

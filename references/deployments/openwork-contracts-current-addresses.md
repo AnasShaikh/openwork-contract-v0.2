@@ -1,6 +1,6 @@
 # OpenWork System - Current Contract Addresses
 
-**Last Updated**: October 25, 2025  
+**Last Updated**: October 27, 2025, 7:45 PM IST  
 **Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)  
 **Standard Deployer**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
 
@@ -13,14 +13,28 @@
 | **Oracle Manager** (Proxy) | `0x70F6fa515120efeA3e404234C318b7745D23ADD4` | - | ✅ |
 | **Oracle Manager** (Implementation) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | - | ✅ |
 | **NOWJC** (Proxy) | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | ✅ |
-| **NOWJC** (Implementation - Commission) | `0x2F4Da95c8b84447605809a38f3a5a42CbCEeE885` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | ✅ |
-| **NOWJC** (Previous Implementation) | `0x9774723857b2bc0e3c353f6d0bb8b90f6e181604` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /nowjc-uncommented-apply-direct-job.sol` | 🔄 |
+| **NOWJC** (Implementation - Milestone Guards) | `0xAe55797B042169936f7816b85bf8387b739084c4` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 2 Nov/nowjc.sol` | ✅ |
+| **NOWJC** (Previous Implementation - Commission) | `0xb6656406bAaFb86Bc46963eD070ff09f3d80426e` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | 🔄 |
+| **NOWJC** (Previous Implementation - Commission v1) | `0x3802dD856398265d527a72D8Bb27b9672C524fbF` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | 🔄 |
+| **NOWJC** (Previous Implementation - Commission v0) | `0x2F4Da95c8b84447605809a38f3a5a42CbCEeE885` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | 🔄 |
+| **NOWJC** (Previous Implementation - Base) | `0x9774723857b2bc0e3c353f6d0bb8b90f6e181604` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /nowjc-uncommented-apply-direct-job.sol` | 🔄 |
 | **Native Bridge** | `0x3b2AC1d1281cA4a1188d9F09A5Af9a9E6a114D6c` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-bridge-upgrade-fix.sol` | ✅ |
 | **Native DAO** (Proxy) | `0x21451dCE07Ad3Ab638Ec71299C1D2BD2064b90E5` | `src/openwork-full-contract-suite-layerzero+CCTP/native-dao-final.sol` | ✅ |
 | **Native DAO** (Implementation) | `0x18d2eC7459eFf0De9495be21525E0742890B5065` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-dao.sol` | ✅ |
-| **Native Rewards** (Proxy) | `0x1e6c32ad4ab15acd59c66fbcdd70cc442d64993e` | `src/openwork-full-contract-suite-layerzero+CCTP/native-rewards-final.sol` | ✅ |
-| **Native Rewards** (Implementation) | `0xb2F64821EDde6d0c0AAD6B71945F94dEF928f363` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-rewards-profile-genesis.sol` | ✅ |
+| **Native Rewards** (Proxy - NEW Oct 27) | `0x947cAd64a26Eae5F82aF68b7Dbf8b457a8f492De` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/native-rewards copy.sol` | ✅ |
+| **Native Rewards** (Implementation - NEW Oct 27) | `0x3cd75e13ef261fb59e4bA8b161F25d11a238c844` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/native-rewards copy.sol` | ✅ |
+| **Native Rewards** (OLD Proxy - Corrupted) | `0x1e6c32ad4ab15acd59c66fbcdd70cc442d64993e` | `src/openwork-full-contract-suite-layerzero+CCTP/native-rewards-final.sol` | 🔄 |
+| **Native Rewards** (OLD Implementation) | `0xb2F64821EDde6d0c0AAD6B71945F94dEF928f363` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-rewards-profile-genesis.sol` | 🔄 |
 | **Native Rewards** (Previous Implementation) | `0x91852bbe9D41F329D1641C0447E0c2405825a95E` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-rewards.sol` | 🔄 |
+
+### Native Rewards Dependencies & Configuration
+
+**New Rewards Contract** (`0x947cAd64a26Eae5F82aF68b7Dbf8b457a8f492De`):
+- **Connected to NOWJC**: `0x9E39B37275854449782F1a2a4524405cE79d6C1e` ✅
+- **References ProfileGenesis**: `0xC37A9dFbb57837F74725AAbEe068f07A1155c394` ✅
+- **References OpenworkGenesis**: `0x1f23683C748fA1AF99B7263dea121eCc5Fe7564C` ✅
+- **Features**: 20 reward bands with dynamic management (add/update/remove bands)
+- **Reason for Redeployment**: Old proxy had 9.6M corrupted storage entries, impossible to fix
 
 ### Modular Genesis Architecture (October 22, 2025) ✨
 
