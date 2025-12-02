@@ -1,6 +1,6 @@
 # OpenWork System - Current Contract Addresses
 
-**Last Updated**: October 27, 2025, 7:45 PM IST  
+**Last Updated**: November 30, 2025, 7:45 PM IST
 **Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)  
 **Standard Deployer**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
 
@@ -11,7 +11,8 @@
 | **Native Athena** (Proxy) | `0x098E52Aff44AEAd944AFf86F4A5b90dbAF5B86bd` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/native-athena-upg-dao-refund-fees-multi-dispute-voting period fix.sol` | ✅ |
 | **Native Athena** (Implementation) | `0xf360c9a73536a1016d1d35f80f2333a16fb2a4d2` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 5 Oct /native-athena.sol` | ✅ |
 | **Oracle Manager** (Proxy) | `0x70F6fa515120efeA3e404234C318b7745D23ADD4` | - | ✅ |
-| **Oracle Manager** (Implementation) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | - | ✅ |
+| **Oracle Manager** (Implementation v2 - Allow Empty) | `0x92F3DDba7Cd5c5734a772ABD53C524b3a4acc179` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 20 Nov/native-athena-oracle-manager-v2-allow-empty-members.sol` | ✅ |
+| **Oracle Manager** (Previous Implementation v1) | `0xAdf1d61e5DeD34fAF507C8CEF24cdf46f46bF537` | - | 🔄 |
 | **NOWJC** (Proxy) | `0x9E39B37275854449782F1a2a4524405cE79d6C1e` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/nowjc.sol` | ✅ |
 | **NOWJC** (Implementation - Milestone Guards) | `0xAe55797B042169936f7816b85bf8387b739084c4` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 2 Nov/nowjc.sol` | ✅ |
 | **NOWJC** (Previous Implementation - Commission) | `0xb6656406bAaFb86Bc46963eD070ff09f3d80426e` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/nowjc-commision.sol` | 🔄 |
@@ -46,8 +47,35 @@
 | **OpenworkGenesis** (Proxy) | `0x1f23683C748fA1AF99B7263dea121eCc5Fe7564C` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/proxy.sol` | ✅ |
 | **ProfileGenesis** (Implementation) | `0x16481537d0Bff65e591D3D44f6F4C38Fb8579d5d` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/profile-genesis-getallprofiles.sol` | ✅ |
 | **ProfileGenesis** (Proxy) | `0xC37A9dFbb57837F74725AAbEe068f07A1155c394` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/proxy.sol` | ✅ |
+| **GenesisReaderHelper** (v4 - Jobs+Apps) | `0x9B16b4211a05912E312541513Ea847d4756f1589` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 20 Nov/genesis-reader-helper-v4-applications.sol` | ⏳ |
+| **GenesisReaderHelper** (v3 - Jobs+Disputes) | `0x7aE451A29BB3871F05C6C9951EC912EfCdE94a5a` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 20 Nov/genesis-reader-helper-v3-jobs.sol` | ✅ |
+| **GenesisReaderHelper** (v2 - Multi-Dispute) | `0xCcf7Fa75C6b31f58bd43847fA6602258ee46A715` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 20 Nov/genesis-reader-helper.sol` | ✅ |
+| **GenesisReaderHelper** (v1 - Original) | `0x24D53dCd6d53fc35108CA295D7170E8D0d093D08` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 20 Nov/genesis-reader-helper.sol` | 🔄 |
 
 **Features**: Jobs/Oracles/DAO (OpenworkGenesis) + Profiles/Ratings (ProfileGenesis) with efficient batch getters
+
+**GenesisReaderHelper v4** (November 28, 2025) - **LATEST**:
+- **Purpose**: Complete batch data retrieval for jobs, disputes, applications, and more
+- **New Features (Job Applications)**:
+  - `getAllJobApplications()` - All 17 applications across all jobs in 1 call
+  - `getApplicationsByApplicant(address)` - User's applications (e.g., 14 for WALL1)
+  - `getApplicationsByJob(string jobId)` - Applications for specific job
+- **Job Filtering** (from v3):
+  - `getJobsByStatus(JobStatus)`, `getOpenJobs()`, `getInProgressJobs()`
+  - `getJobsByPosterWithStatus(address, JobStatus)`
+- **Existing Features**: Multi-dispute discovery, skill apps, Ask Athena apps
+- **Performance**: Reduces application queries from 50+ to 2 calls
+- **Deployment TX**: `0xb74f29e74681a374d70db819e137b08f2f49ac3b72e62a4fae38ceff46e19c33`
+- **Verification GUID**: `16s3fdphmzxi6yecscwnfbvzz32yrb9pvquyeuf3udrnl5agef`
+- **Frontend Guide**: `references/UI helper/genesis-reader-helper-frontend-guide.md`
+
+**GenesisReaderHelper v3** (November 28, 2025) - Archived:
+- **Features**: Job filtering by status, multi-dispute discovery
+- **Status**: Superseded by v4 (application batch queries added)
+
+**GenesisReaderHelper v2** (November 26, 2025) - Archived:
+- **Features**: Multi-dispute discovery, skill verification & Ask Athena batch queries
+- **Status**: Superseded by v3 (job filtering added)
 
 ### Legacy Genesis Contracts
 

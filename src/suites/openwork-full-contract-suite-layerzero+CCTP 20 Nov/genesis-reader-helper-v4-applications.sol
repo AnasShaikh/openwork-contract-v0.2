@@ -8,6 +8,43 @@ pragma solidity ^0.8.22;
  */
 
 interface IOpenworkGenesis {
+    enum JobStatus {
+        Open,
+        InProgress,
+        Completed,
+        Cancelled
+    }
+    
+    struct MilestonePayment {
+        string descriptionHash;
+        uint256 amount;
+    }
+    
+    struct Job {
+        string id;
+        address jobGiver;
+        address[] applicants;
+        string jobDetailHash;
+        JobStatus status;
+        string[] workSubmissions;
+        MilestonePayment[] milestonePayments;
+        MilestonePayment[] finalMilestones;
+        uint256 totalPaid;
+        uint256 currentMilestone;
+        address selectedApplicant;
+        uint256 selectedApplicationId;
+    }
+    
+    struct Application {
+        uint256 id;
+        string jobId;
+        address applicant;
+        string applicationHash;
+        MilestonePayment[] proposedMilestones;
+        uint32 preferredPaymentChainDomain;
+        address preferredPaymentAddress;
+    }
+    
     struct SkillVerificationApplication {
         uint256 id;
         address applicant;
@@ -56,6 +93,10 @@ interface IOpenworkGenesis {
     function getSkillApplication(uint256 applicationId) external view returns (SkillVerificationApplication memory);
     function getAskAthenaApplication(uint256 athenaId) external view returns (AskAthenaApplication memory);
     function getAllJobIds() external view returns (string[] memory);
+    function getJob(string memory jobId) external view returns (Job memory);
+    function getJobsByPoster(address poster) external view returns (string[] memory);
+    function getJobApplication(string memory jobId, uint256 applicationId) external view returns (Application memory);
+    function getJobApplicationCount(string memory jobId) external view returns (uint256);
     function getDispute(string memory jobId) external view returns (Dispute memory);
 }
 
@@ -350,6 +391,177 @@ contract GenesisReaderHelper {
         }
         
         return activeDisputes;
+    }
+    
+    // ==================== JOB BATCH GETTERS ====================
+    
+    /**
+     * @dev Get all jobs with specific status
+     * @param status Job status to filter by (0=Open, 1=InProgress, 2=Completed, 3=Cancelled)
+     * @return Array of jobs matching the status
+     */
+    function getJobsByStatus(IOpenworkGenesis.JobStatus status) 
+        external view returns (IOpenworkGenesis.Job[] memory) {
+        string[] memory allJobIds = genesis.getAllJobIds();
+        
+        // First pass: count jobs with matching status
+        uint256 matchCount = 0;
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            IOpenworkGenesis.Job memory job = genesis.getJob(allJobIds[i]);
+            if (job.status == status) {
+                matchCount++;
+            }
+        }
+        
+        // Second pass: collect matching jobs
+        IOpenworkGenesis.Job[] memory matchingJobs = new IOpenworkGenesis.Job[](matchCount);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            IOpenworkGenesis.Job memory job = genesis.getJob(allJobIds[i]);
+            if (job.status == status) {
+                matchingJobs[currentIndex] = job;
+                currentIndex++;
+            }
+        }
+        
+        return matchingJobs;
+    }
+    
+    /**
+     * @dev Get all open jobs (status = 0)
+     * @return Array of open jobs
+     */
+    function getOpenJobs() external view returns (IOpenworkGenesis.Job[] memory) {
+        return this.getJobsByStatus(IOpenworkGenesis.JobStatus.Open);
+    }
+    
+    /**
+     * @dev Get all in-progress jobs (status = 1)
+     * @return Array of in-progress jobs
+     */
+    function getInProgressJobs() external view returns (IOpenworkGenesis.Job[] memory) {
+        return this.getJobsByStatus(IOpenworkGenesis.JobStatus.InProgress);
+    }
+    
+    /**
+     * @dev Get jobs posted by specific user, filtered by status
+     * @param poster Address of job poster
+     * @param status Job status to filter by
+     * @return Array of user's jobs matching the status
+     */
+    function getJobsByPosterWithStatus(address poster, IOpenworkGenesis.JobStatus status) 
+        external view returns (IOpenworkGenesis.Job[] memory) {
+        string[] memory userJobIds = genesis.getJobsByPoster(poster);
+        
+        // First pass: count matching jobs
+        uint256 matchCount = 0;
+        for (uint256 i = 0; i < userJobIds.length; i++) {
+            IOpenworkGenesis.Job memory job = genesis.getJob(userJobIds[i]);
+            if (job.status == status) {
+                matchCount++;
+            }
+        }
+        
+        // Second pass: collect matching jobs
+        IOpenworkGenesis.Job[] memory matchingJobs = new IOpenworkGenesis.Job[](matchCount);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 0; i < userJobIds.length; i++) {
+            IOpenworkGenesis.Job memory job = genesis.getJob(userJobIds[i]);
+            if (job.status == status) {
+                matchingJobs[currentIndex] = job;
+                currentIndex++;
+            }
+        }
+        
+        return matchingJobs;
+    }
+    
+    // ==================== JOB APPLICATION BATCH GETTERS ====================
+    
+    /**
+     * @dev Get all job applications across all jobs
+     * @return Array of all applications
+     */
+    function getAllJobApplications() external view returns (IOpenworkGenesis.Application[] memory) {
+        string[] memory allJobIds = genesis.getAllJobIds();
+        
+        // First pass: count total applications
+        uint256 totalApps = 0;
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            totalApps += genesis.getJobApplicationCount(allJobIds[i]);
+        }
+        
+        // Second pass: collect all applications
+        IOpenworkGenesis.Application[] memory allApps = new IOpenworkGenesis.Application[](totalApps);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            uint256 appCount = genesis.getJobApplicationCount(allJobIds[i]);
+            for (uint256 j = 1; j <= appCount; j++) {
+                allApps[currentIndex] = genesis.getJobApplication(allJobIds[i], j);
+                currentIndex++;
+            }
+        }
+        
+        return allApps;
+    }
+    
+    /**
+     * @dev Get all applications submitted by specific user
+     * @param applicant Address of the applicant
+     * @return Array of applications submitted by the user
+     */
+    function getApplicationsByApplicant(address applicant) 
+        external view returns (IOpenworkGenesis.Application[] memory) {
+        string[] memory allJobIds = genesis.getAllJobIds();
+        
+        // First pass: count user's applications
+        uint256 userAppCount = 0;
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            uint256 appCount = genesis.getJobApplicationCount(allJobIds[i]);
+            for (uint256 j = 1; j <= appCount; j++) {
+                IOpenworkGenesis.Application memory app = genesis.getJobApplication(allJobIds[i], j);
+                if (app.applicant == applicant) {
+                    userAppCount++;
+                }
+            }
+        }
+        
+        // Second pass: collect user's applications
+        IOpenworkGenesis.Application[] memory userApps = new IOpenworkGenesis.Application[](userAppCount);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 0; i < allJobIds.length; i++) {
+            uint256 appCount = genesis.getJobApplicationCount(allJobIds[i]);
+            for (uint256 j = 1; j <= appCount; j++) {
+                IOpenworkGenesis.Application memory app = genesis.getJobApplication(allJobIds[i], j);
+                if (app.applicant == applicant) {
+                    userApps[currentIndex] = app;
+                    currentIndex++;
+                }
+            }
+        }
+        
+        return userApps;
+    }
+    
+    /**
+     * @dev Get all applications for a specific job
+     * @param jobId Job ID to get applications for
+     * @return Array of applications for the job
+     */
+    function getApplicationsByJob(string memory jobId) 
+        external view returns (IOpenworkGenesis.Application[] memory) {
+        uint256 appCount = genesis.getJobApplicationCount(jobId);
+        IOpenworkGenesis.Application[] memory apps = new IOpenworkGenesis.Application[](appCount);
+        
+        for (uint256 i = 1; i <= appCount; i++) {
+            apps[i-1] = genesis.getJobApplication(jobId, i);
+        }
+        
+        return apps;
     }
     
     // ==================== UTILITY FUNCTIONS ====================
