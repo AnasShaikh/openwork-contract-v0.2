@@ -221,17 +221,17 @@ function upgradeFromDAO(address newImplementation) external {
     address _referrerAddress,
     bytes calldata _nativeOptions
 ) external payable nonReentrant {
-    // require(!hasProfile[msg.sender], "Profile already exists");
+    require(!hasProfile[msg.sender], "Profile already exists");
     require(bytes(_ipfsHash).length > 0, "IPFS hash cannot be empty");
-
+    
     // Create profile locally
-    // profiles[msg.sender] = Profile({
-    //     userAddress: msg.sender,
-    //     ipfsHash: _ipfsHash,
-    //     referrerAddress: _referrerAddress,
-    //     portfolioHashes: new string[](0)
-    // });
-    // hasProfile[msg.sender] = true;
+    profiles[msg.sender] = Profile({
+        userAddress: msg.sender,
+        ipfsHash: _ipfsHash,
+        referrerAddress: _referrerAddress,
+        portfolioHashes: new string[](0)
+    });
+    hasProfile[msg.sender] = true;
     
     // Send to native chain only
     bytes memory nativePayload = abi.encode("createProfile", msg.sender, _ipfsHash, _referrerAddress);
@@ -241,7 +241,7 @@ function upgradeFromDAO(address newImplementation) external {
 }
     
     function getProfile(address _user) public view returns (Profile memory) {
-        // require(hasProfile[_user], "Profile does not exist");
+        require(hasProfile[_user], "Profile does not exist");
         return profiles[_user];
     }
     
@@ -668,8 +668,8 @@ function upgradeFromDAO(address newImplementation) external {
     ) external payable nonReentrant {
       //  require(hasProfile[msg.sender], "Profile does not exist");
         require(bytes(_portfolioHash).length > 0, "Portfolio hash cannot be empty");
-
-        // profiles[msg.sender].portfolioHashes.push(_portfolioHash);
+        
+        profiles[msg.sender].portfolioHashes.push(_portfolioHash);
         
         // Send to native chain
         bytes memory payload = abi.encode("addPortfolio", msg.sender, _portfolioHash);
@@ -682,11 +682,11 @@ function upgradeFromDAO(address newImplementation) external {
         string memory _newIpfsHash,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
-        // require(hasProfile[msg.sender], "Profile does not exist");
+        require(hasProfile[msg.sender], "Profile does not exist");
         require(bytes(_newIpfsHash).length > 0, "IPFS hash cannot be empty");
-
+        
         // Update local profile
-        // profiles[msg.sender].ipfsHash = _newIpfsHash;
+        profiles[msg.sender].ipfsHash = _newIpfsHash;
         
         // Send to native chain
         bytes memory payload = abi.encode("updateProfile", msg.sender, _newIpfsHash);
@@ -700,12 +700,12 @@ function upgradeFromDAO(address newImplementation) external {
         string memory _newPortfolioHash,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
-        // require(hasProfile[msg.sender], "Profile does not exist");
+        require(hasProfile[msg.sender], "Profile does not exist");
         require(bytes(_newPortfolioHash).length > 0, "Portfolio hash cannot be empty");
-        // require(_index < profiles[msg.sender].portfolioHashes.length, "Portfolio index out of bounds");
-
+        require(_index < profiles[msg.sender].portfolioHashes.length, "Portfolio index out of bounds");
+        
         // Update local portfolio
-        // profiles[msg.sender].portfolioHashes[_index] = _newPortfolioHash;
+        profiles[msg.sender].portfolioHashes[_index] = _newPortfolioHash;
         
         // Send to native chain
         bytes memory payload = abi.encode("updatePortfolioItem", msg.sender, _index, _newPortfolioHash);
@@ -718,15 +718,15 @@ function upgradeFromDAO(address newImplementation) external {
         uint256 _index,
         bytes calldata _nativeOptions
     ) external payable nonReentrant {
-        // require(hasProfile[msg.sender], "Profile does not exist");
-        // require(_index < profiles[msg.sender].portfolioHashes.length, "Portfolio index out of bounds");
-
+        require(hasProfile[msg.sender], "Profile does not exist");
+        require(_index < profiles[msg.sender].portfolioHashes.length, "Portfolio index out of bounds");
+        
         // Remove from local portfolio (move last to index and pop)
-        // uint256 lastIndex = profiles[msg.sender].portfolioHashes.length - 1;
-        // if (_index != lastIndex) {
-        //     profiles[msg.sender].portfolioHashes[_index] = profiles[msg.sender].portfolioHashes[lastIndex];
-        // }
-        // profiles[msg.sender].portfolioHashes.pop();
+        uint256 lastIndex = profiles[msg.sender].portfolioHashes.length - 1;
+        if (_index != lastIndex) {
+            profiles[msg.sender].portfolioHashes[_index] = profiles[msg.sender].portfolioHashes[lastIndex];
+        }
+        profiles[msg.sender].portfolioHashes.pop();
         
         // Send to native chain
         bytes memory payload = abi.encode("removePortfolioItem", msg.sender, _index);
