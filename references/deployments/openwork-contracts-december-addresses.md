@@ -1,7 +1,7 @@
 # OpenWork System - Current Contract Addresses
 
-**Last Updated**: November 30, 2025, 7:45 PM IST
-**Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)  
+**Last Updated**: December 29, 2025
+**Registry**: `0x8AbC0E626A8fC723ec6f27FE8a4157A186D5767D` (Arbitrum Sepolia)
 **Standard Deployer**: WALL2 (`0xfD08836eeE6242092a9c869237a8d122275b024A`)
 
 ## Arbitrum Sepolia (Native Chain)
@@ -43,7 +43,7 @@
 
 | Contract | Address | File Path | Verified |
 |----------|---------|-----------|----------|
-| **OpenworkGenesis** (Implementation) | `0xC1b2CC467f9b4b7Be3484a3121Ad6a8453dfB584` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/openwork-genesis-getAllOracles.sol` | ✅ |
+| **OpenworkGenesis** (Implementation) | `0xC1b2CC467f9b4b7Be3484a3121Ad6a8453dfB584` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/openwork-genesis-getAllOracles.sol` (Copy: `src/suites/openwork-full-contract-suite-26-Dec-version/openwork-genesis-deployed-22-oct.sol`) | ✅ |
 | **OpenworkGenesis** (Proxy) | `0x1f23683C748fA1AF99B7263dea121eCc5Fe7564C` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/proxy.sol` | ✅ |
 | **ProfileGenesis** (Implementation) | `0x16481537d0Bff65e591D3D44f6F4C38Fb8579d5d` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/profile-genesis-getallprofiles.sol` | ✅ |
 | **ProfileGenesis** (Proxy) | `0xC37A9dFbb57837F74725AAbEe068f07A1155c394` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 19 Oct/proxy.sol` | ✅ |
@@ -115,6 +115,8 @@
 | **Cross-Chain Rewards** (Implementation) | `0x58c1EA0d278252e8F48C46F470b601FcbF779346` | `src/suites/openwork-full-contract-suite-layerzero+CCTP 1 Oct Eve/main-rewards.sol` | ✅ |
 | **Main DAO** (Proxy) | `0xc3579BDC6eC1fAad8a67B1Dc5542EBcf28456465` | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | ✅ |
 | **Main DAO** (Implementation) | `0xbde733D64D8C2bcA369433E7dC96DC3ecFE414e4` | `src/openwork-full-contract-suite-layerzero+CCTP/main-dao-final.sol` | ✅ |
+| **Team Vesting** (Proxy) | `0x9EF719bCE321A9FeA57aE023481f5042a041EA5d` | `src/suites/openwork-full-contract-suite-26-Dec-version/team-vesting.sol` | ⏳ |
+| **Team Vesting** (Implementation) | `0x80e3d4b36e596fC5a94C0442B674E5f09A8dEFE8` | `src/suites/openwork-full-contract-suite-26-Dec-version/team-vesting.sol` | ⏳ |
 
 ## Ethereum Sepolia (Local Chain) - NEW DEPLOYMENT
 

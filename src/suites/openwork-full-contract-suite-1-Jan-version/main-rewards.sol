@@ -55,7 +55,10 @@ contract CrossChainRewardsContract is
     // Cross-chain tracking
     mapping(uint32 => bool) public authorizedChains;
     mapping(uint32 => string) public chainNames;
-    
+
+    // Storage gap for upgrade safety
+    uint256[50] private __gap;
+
     // Events
     event ProfileCreated(address indexed user, address indexed referrer, uint32 indexed sourceChain);
     event ClaimableBalanceUpdated(address indexed user, uint256 newBalance, uint32 indexed sourceChain);

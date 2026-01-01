@@ -202,8 +202,8 @@ contract NativeOpenWorkJobContract is
     uint256 private profileCount;
     mapping(address => bool) public authorizedContracts;
     
-    // USDT token and CCTP receiver
-    IERC20 public usdtToken;
+    // USDC token and CCTP receiver
+    IERC20 public usdcToken;
     address public cctpReceiver;
     
     // CCTP transceiver for cross-chain payments
@@ -211,7 +211,10 @@ contract NativeOpenWorkJobContract is
     
     // Native Athena authorization for dispute resolution
     address public nativeAthena;
-    
+
+    // Native DAO for governance override on dispute resolution
+    address public nativeDAO;
+
     // Mapping to store applicant preferred chain domains for dispute resolution
     mapping(string => mapping(address => uint32)) public jobApplicantChainDomain;
     
@@ -220,6 +223,9 @@ contract NativeOpenWorkJobContract is
     uint256 public accumulatedCommission;
     uint256 public commissionPercentage = 100; // 1% in basis points (100/10000)
     uint256 public minCommission = 1e6; // 1 USDC (6 decimals)
+
+    // Storage gap for upgrade safety
+    uint256[50] private __gap;
 
     // ==================== EVENTS ====================
     
@@ -245,6 +251,7 @@ contract NativeOpenWorkJobContract is
     event AuthorizedContractRemoved(address indexed contractAddress);
     event DisputedFundsReleased(string indexed jobId, address indexed winner, uint32 winnerChainDomain, uint256 amount);
     event NativeAthenaUpdated(address indexed oldNativeAthena, address indexed newNativeAthena);
+    event NativeDAOUpdated(address indexed oldNativeDAO, address indexed newNativeDAO);
     event CommissionDeducted(string indexed jobId, uint256 grossAmount, uint256 commission, uint256 netAmount);
     event CommissionWithdrawn(address indexed treasury, uint256 amount);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
@@ -261,7 +268,7 @@ contract NativeOpenWorkJobContract is
         address _bridge, 
         address _genesis,
         address _rewardsContract,
-        address _usdtToken,
+        address _usdcToken,
         address _cctpReceiver
     ) public initializer {
         __Ownable_init(_owner);
@@ -270,7 +277,7 @@ contract NativeOpenWorkJobContract is
         bridge = _bridge;
         genesis = IOpenworkGenesis(_genesis);
         rewardsContract = IOpenWorkRewards(_rewardsContract);
-        usdtToken = IERC20(_usdtToken);
+        usdcToken = IERC20(_usdcToken);
         cctpReceiver = _cctpReceiver;
     }
 
@@ -333,7 +340,13 @@ contract NativeOpenWorkJobContract is
         nativeAthena = _nativeAthena;
         emit NativeAthenaUpdated(oldNativeAthena, _nativeAthena);
     }
-    
+
+    function setNativeDAO(address _nativeDAO) external onlyOwner {
+        address oldNativeDAO = nativeDAO;
+        nativeDAO = _nativeDAO;
+        emit NativeDAOUpdated(oldNativeDAO, _nativeDAO);
+    }
+
     function setApplicantChainDomain(string memory _jobId, address _applicant, uint32 _chainDomain) external {
         require(authorizedContracts[msg.sender], "Not authorized");
         jobApplicantChainDomain[_jobId][_applicant] = _chainDomain;
@@ -393,7 +406,7 @@ contract NativeOpenWorkJobContract is
         require(amount > 0, "Invalid amount");
         
         accumulatedCommission -= amount;
-        usdtToken.safeTransfer(treasury, amount);
+        usdcToken.safeTransfer(treasury, amount);
         
         emit CommissionWithdrawn(treasury, amount);
     }
@@ -407,7 +420,7 @@ contract NativeOpenWorkJobContract is
         
         uint256 amount = accumulatedCommission;
         accumulatedCommission = 0;
-        usdtToken.safeTransfer(treasury, amount);
+        usdcToken.safeTransfer(treasury, amount);
         
         emit CommissionWithdrawn(treasury, amount);
     }
@@ -461,10 +474,7 @@ contract NativeOpenWorkJobContract is
      * Called by bridge when user performs governance actions
      */
     function incrementGovernanceAction(address user) external {
-       /* require(
-                msg.sender == bridge || authorizedContracts[msg.sender], 
-                "Only bridge or authorized"
-            );  */      
+        require(authorizedContracts[msg.sender], "Only authorized");
         // Update Genesis for backward compatibility
         genesis.incrementUserGovernanceActions(user);
         
@@ -766,44 +776,19 @@ contract NativeOpenWorkJobContract is
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         emit WorkSubmitted(_jobId, _applicant, _submissionHash, job.currentMilestone);
     }
-    
-    // function releasePayment(address _jobGiver, string memory _jobId, uint256 _amount) external {
-    //     require(msg.sender == bridge, "Only bridge");
-        
-    //     IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
-    //     require(job.selectedApplicant != address(0), "No applicant");
-        
-    //     // Transfer USDC directly from NOWJC to job taker (NOWJC now holds USDC)
-    //     usdtToken.safeTransfer(job.selectedApplicant, _amount);
-        
-    //     // Update job total paid in Genesis
-    //     genesis.updateJobTotalPaid(_jobId, _amount);
 
-    //     // Delegate to RewardsContract for token calculation and distribution
-    //     _processRewardsForPayment(_jobGiver, _jobId, _amount);
-        
-    //     // Check if job should be completed
-    //     if (job.currentMilestone == job.finalMilestones.length) {
-    //         genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
-    //         emit JobStatusChanged(_jobId, JobStatus.Completed);
-    //     }
-        
-    //     emit PaymentReleased(_jobId, _jobGiver, job.selectedApplicant, _amount, job.currentMilestone);
-    // }
-    
     function releasePaymentCrossChain(
-        address _jobGiver, 
-        string memory _jobId, 
+        address _jobGiver,
+        string memory _jobId,
         uint256 _amount,
         uint32 _targetChainDomain,
         address _targetRecipient
-    ) public {
-        // ✅ REMOVED: require(msg.sender == bridge, "Only bridge");
+    ) internal {
+        // Access control enforced by handleReleasePaymentCrossChain (bridge only)
         require(cctpTransceiver != address(0), "Transceiver not set");
         require(_targetRecipient != address(0), "Invalid recipient");
         require(_amount > 0, "Invalid amount");
-        // ✅ REMOVED: require(_targetChainDomain > 0, "Invalid domain");
-        
+
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         require(job.selectedApplicant != address(0), "No applicant");
         require(job.status == IOpenworkGenesis.JobStatus.InProgress, "Job not in progress");
@@ -824,7 +809,7 @@ contract NativeOpenWorkJobContract is
         bytes32 mintRecipient = bytes32(uint256(uint160(_targetRecipient)));
         
         // ✅ CRITICAL FIX: Approve CCTP transceiver to spend USDC before sendFast()
-        usdtToken.approve(cctpTransceiver, netAmount);
+        usdcToken.approve(cctpTransceiver, netAmount);
         
         // Send USDC via CCTP to target chain NOWJC (not end user)
         // Target chain NOWJC will handle distribution to end user
@@ -884,13 +869,13 @@ contract NativeOpenWorkJobContract is
         
         if (applicantTargetDomain == 3) {
             // Native chain (Arbitrum) - direct transfer (with net amount)
-            usdtToken.safeTransfer(job.selectedApplicant, netAmount);
+            usdcToken.safeTransfer(job.selectedApplicant, netAmount);
         } else {
             // Cross-chain transfer via CCTP to applicant's preferred domain
             require(cctpTransceiver != address(0), "CCTP Transceiver not set");
             
             // ✅ CRITICAL FIX: Use approve → sendFast pattern for cross-chain release
-            usdtToken.approve(cctpTransceiver, netAmount);
+            usdcToken.approve(cctpTransceiver, netAmount);
             ICCTPTransceiver(cctpTransceiver).sendFast(
                 netAmount,
                 applicantTargetDomain,
@@ -1025,33 +1010,10 @@ contract NativeOpenWorkJobContract is
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         return job.status == IOpenworkGenesis.JobStatus.Open;
     }*/
-    
-  /*  function getJobStatus(string memory _jobId) external view returns (JobStatus) {
-        IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
-        return JobStatus(uint8(job.status));
-    }
-    
-    function jobExists(string memory _jobId) external view returns (bool) {
-        return genesis.jobExists(_jobId);
-    }
 
-    function getUserReferrer(address user) external view returns (address) {
-        return genesis.getUserReferrer(user);
-    }
-    
-    function getTotalPlatformPayments() external view returns (uint256) {
-        return genesis.totalPlatformPayments();
-    }
-    
-    function emergencyWithdrawUSDT() external onlyOwner {
-        uint256 balance = usdtToken.balanceOf(address(this));
-        require(balance > 0, "No balance");
-        usdtToken.safeTransfer(owner(), balance);
-    }*/
-    
-    function setUSDTToken(address _newToken) external onlyOwner {
+    function setUsdcToken(address _newToken) external onlyOwner {
         require(_newToken != address(0), "Invalid address");
-        usdtToken = IERC20(_newToken);
+        usdcToken = IERC20(_newToken);
     }
     
     // ==================== DISPUTE RESOLUTION ====================
@@ -1067,7 +1029,7 @@ contract NativeOpenWorkJobContract is
         uint256 _amount,
         uint32 _targetChainDomain
     ) external {
-       // require(msg.sender == nativeAthena, "Only Native Athena can resolve disputes");
+        require(msg.sender == nativeAthena || msg.sender == nativeDAO, "Only Athena or DAO");
         require(_recipient != address(0), "Invalid recipient");
         require(_amount > 0, "Invalid amount");
         
@@ -1080,13 +1042,13 @@ contract NativeOpenWorkJobContract is
         
         if (_targetChainDomain == 3) {
             // Native chain (Arbitrum) - direct transfer (with net amount)
-            usdtToken.safeTransfer(_recipient, netAmount);
+            usdcToken.safeTransfer(_recipient, netAmount);
         } else {
             // Cross-chain transfer via CCTP - FIXED PATTERN
             require(cctpTransceiver != address(0), "CCTP Transceiver not set");
             
             // ✅ CRITICAL FIX: Use approve → sendFast pattern (not safeTransfer)
-            usdtToken.approve(cctpTransceiver, netAmount);
+            usdcToken.approve(cctpTransceiver, netAmount);
             ICCTPTransceiver(cctpTransceiver).sendFast(
                 netAmount,
                 _targetChainDomain,

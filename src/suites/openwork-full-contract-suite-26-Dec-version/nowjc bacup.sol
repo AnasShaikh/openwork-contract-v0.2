@@ -110,7 +110,6 @@ interface IOpenWorkRewards {
     );
     
     function getUserTotalClaimableTokens(address user) external view returns (uint256);
-    function getUserTotalUnlockedTokens(address user) external view returns (uint256); // SECURITY FIX
     function markTokensClaimed(address user, uint256 amount) external returns (bool);
 }
 
@@ -948,22 +947,21 @@ contract NativeOpenWorkJobContract is
 
     function syncRewardsData(bytes calldata _options) external payable {
     require(bridge != address(0), "Bridge not set");
-
-    // SECURITY FIX: Get user's total UNLOCKED tokens (not claimable)
-    // Main chain subtracts totalClaimed to prevent double-claims when callbacks fail
-    uint256 totalUnlocked = address(rewardsContract) != address(0) ?
-        rewardsContract.getUserTotalUnlockedTokens(msg.sender) : 0;
-
-    require(totalUnlocked > 0, "No tokens");
-
+    
+    // Get user's total claimable tokens from rewards contract
+    uint256 claimableAmount = address(rewardsContract) != address(0) ? 
+        rewardsContract.getUserTotalClaimableTokens(msg.sender) : 0;
+    
+    require(claimableAmount > 0, "No tokens");
+    
     // Send simple data to bridge
     INativeBridge(bridge).sendSyncRewardsData{value: msg.value}(
         msg.sender,
-        totalUnlocked,
+        claimableAmount,
         _options
     );
-
-    emit RewardsDataSynced(msg.sender, 1, totalUnlocked, 0); // Simplified event
+    
+    emit RewardsDataSynced(msg.sender, 1, claimableAmount, 0); // Simplified event
     }
     
   /*  function getRating(address _user) public view returns (uint256) {

@@ -104,6 +104,13 @@ contract OpenWorkRewardsContract is
     );
     event JobContractUpdated(address indexed oldContract, address indexed newContract);
 
+    // Team tokens events
+    event TeamTokensAllocated(address indexed member, uint256 amount, uint256 totalAllocated);
+    event TeamTokensClaimed(address indexed member, uint256 amount);
+    event TeamTokensPoolUpdated(uint256 oldPool, uint256 newPool);
+    event TeamTokenRateUpdated(uint256 oldRate, uint256 newRate, uint256 actionsRequired);
+    event NativeDAOUpdated(address indexed oldDAO, address indexed newDAO);
+
     // ==================== MODIFIERS ====================
     
     modifier onlyJobContract() {
@@ -150,6 +157,112 @@ contract OpenWorkRewardsContract is
     
     function setProfileGenesis(address _profileGenesis) external onlyOwner {
         profileGenesis = IProfileGenesis(_profileGenesis);
+    }
+
+    // ==================== TEAM TOKENS ADMIN FUNCTIONS ====================
+
+    /**
+     * @dev Set native DAO address (allows DAO to allocate team tokens)
+     */
+    function setNativeDAO(address _nativeDAO) external onlyOwner {
+        address oldDAO = nativeDAO;
+        nativeDAO = _nativeDAO;
+        emit NativeDAOUpdated(oldDAO, _nativeDAO);
+    }
+
+    /**
+     * @dev Allocate team tokens to members (owner or DAO only)
+     * @param members Array of member addresses
+     * @param amounts Array of token amounts (overwrites existing allocations)
+     */
+    function allocateTeamTokens(
+        address[] calldata members,
+        uint256[] calldata amounts
+    ) external {
+        require(
+            msg.sender == owner() || msg.sender == nativeDAO,
+            "Only owner or DAO"
+        );
+        require(members.length == amounts.length, "Array length mismatch");
+
+        for (uint256 i = 0; i < members.length; i++) {
+            address member = members[i];
+            uint256 newAmount = amounts[i];
+
+            require(member != address(0), "Invalid address");
+            require(newAmount > 0, "Amount must be positive");
+
+            // Get old allocation to properly track total
+            uint256 oldAllocation = teamTokensAllocated[member];
+
+            // Update allocations (overwrites existing)
+            if (!isTeamMember[member]) {
+                isTeamMember[member] = true;
+                teamMembers.push(member);
+            }
+
+            teamTokensAllocated[member] = newAmount;
+
+            // Update total: subtract old, add new
+            totalTeamTokensAllocated = totalTeamTokensAllocated - oldAllocation + newAmount;
+
+            emit TeamTokensAllocated(member, newAmount, totalTeamTokensAllocated);
+        }
+
+        // Validate total doesn't exceed pool
+        require(totalTeamTokensAllocated <= TEAM_TOKENS_POOL, "Exceeds team tokens pool");
+    }
+
+    /**
+     * @dev Adjust team tokens pool size (owner only)
+     * @param newPool New pool size (cannot reduce below already allocated)
+     */
+    function setTeamTokensPool(uint256 newPool) external onlyOwner {
+        require(newPool >= totalTeamTokensAllocated, "Cannot reduce below allocated");
+        uint256 oldPool = TEAM_TOKENS_POOL;
+        TEAM_TOKENS_POOL = newPool;
+        emit TeamTokensPoolUpdated(oldPool, newPool);
+    }
+
+    /**
+     * @dev Adjust team token unlock rate (owner or DAO)
+     * @param desiredActions Number of actions required to unlock full pool
+     */
+    function setTeamTokenActionRequirement(uint256 desiredActions) external {
+        require(
+            msg.sender == owner() || msg.sender == nativeDAO,
+            "Only owner or DAO"
+        );
+        require(desiredActions >= 100, "Min 100 actions");
+        require(desiredActions <= 10_000_000, "Max 10M actions");
+
+        uint256 newRate = TEAM_TOKENS_POOL / desiredActions;
+        require(newRate >= 1000 * 1e18, "Min 1k tokens per action");
+
+        uint256 oldRate = teamTokensPerGovAction;
+        teamTokensPerGovAction = newRate;
+
+        emit TeamTokenRateUpdated(oldRate, newRate, desiredActions);
+    }
+
+    /**
+     * @dev TEST ONLY: Manually set governance actions for testing
+     * WARNING: This bypasses normal governance flow - only for testnets
+     */
+    function setGovernanceActionsForTesting(address user, uint256 actions) external onlyOwner {
+        userTotalGovernanceActions[user] = actions;
+    }
+
+    /**
+     * @dev Emergency admin function to manually adjust team tokens claimed
+     * USE CASE: When callbacks fail and accounting becomes incorrect on native chain
+     * WARNING: Only use when absolutely necessary - can bypass normal claim flow
+     */
+    function adminSetTeamTokensClaimed(address user, uint256 amount) external onlyOwner {
+        require(isTeamMember[user], "Not a team member");
+        require(amount <= teamTokensAllocated[user], "Cannot exceed allocation");
+        teamTokensClaimed[user] = amount;
+        emit TeamTokensClaimed(user, amount);
     }
 
     // ==================== REWARD BANDS INITIALIZATION ====================
@@ -399,30 +512,93 @@ contract OpenWorkRewardsContract is
         userTotalGovernanceActions[user]++;
         
         emit GovernanceActionRecorded(
-            user, 
-            currentBand, 
+            user,
+            currentBand,
             userGovernanceActionsByBand[user][currentBand],
             userTotalGovernanceActions[user]
         );
     }
 
+    // ==================== TEAM TOKENS CALCULATION ====================
+
+    /**
+     * @dev Calculate team tokens claimable for a user
+     * Returns 0 for non-team members
+     */
+    function getTeamTokensClaimable(address user) public view returns (uint256) {
+        if (!isTeamMember[user]) return 0;
+
+        uint256 allocated = teamTokensAllocated[user];
+        uint256 govActions = userTotalGovernanceActions[user];
+
+        // Calculate max unlocked based on total governance actions
+        uint256 maxUnlocked = govActions * teamTokensPerGovAction;
+
+        // Can't unlock more than allocated
+        uint256 totalUnlocked = maxUnlocked > allocated ? allocated : maxUnlocked;
+
+        // Subtract already claimed
+        return totalUnlocked > teamTokensClaimed[user] ?
+            totalUnlocked - teamTokensClaimed[user] : 0;
+    }
+
     // ==================== NEW: SIMPLIFIED CLAIMABLE CALCULATION ====================
-    
+
     /**
      * @dev Calculate user's total claimable tokens (simplified for sync)
-     * This is the main function NOWJC calls for cross-chain sync
+     * DEPRECATED: Use getUserTotalUnlockedTokens() for cross-chain sync to prevent double-claims
+     * This returns current claimable (after subtracting claimed), which causes double-claim vulnerability
      */
     function getUserTotalClaimableTokens(address user) external view returns (uint256) {
-        uint256 totalClaimable = 0;
+        // Pool A: Earned rewards
+        uint256 earnedClaimable = 0;
         UserBandRewards[] memory rewards = userBandRewards[user];
-        
+
         for (uint256 i = 0; i < rewards.length; i++) {
             UserBandRewards memory bandReward = rewards[i];
             uint256 bandClaimable = _calculateBandClaimable(user, bandReward);
-            totalClaimable += bandClaimable;
+            earnedClaimable += bandClaimable;
         }
-        
-        return totalClaimable;
+
+        // Pool B: Team tokens
+        uint256 teamClaimable = getTeamTokensClaimable(user);
+
+        // Return combined total
+        return earnedClaimable + teamClaimable;
+    }
+
+    /**
+     * @dev Calculate user's total UNLOCKED tokens (for cross-chain sync)
+     * SECURITY FIX: Returns total unlocked ever (not current claimable)
+     * Main chain subtracts totalClaimed to prevent double-claims when callbacks fail
+     */
+    function getUserTotalUnlockedTokens(address user) external view returns (uint256) {
+        // Pool A: Earned rewards - calculate total unlocked (not claimable)
+        uint256 earnedUnlocked = 0;
+        UserBandRewards[] memory rewards = userBandRewards[user];
+
+        for (uint256 i = 0; i < rewards.length; i++) {
+            UserBandRewards memory bandReward = rewards[i];
+            uint256 govActionsInBand = userGovernanceActionsByBand[user][bandReward.band];
+            uint256 unlockRate = rewardBands[bandReward.band].tokensPerGovernanceAction;
+            uint256 maxUnlockedFromGov = govActionsInBand * unlockRate;
+
+            // Total unlocked for this band = min(earned, unlocked by gov actions)
+            uint256 bandUnlocked = bandReward.tokensEarned > maxUnlockedFromGov ?
+                maxUnlockedFromGov : bandReward.tokensEarned;
+            earnedUnlocked += bandUnlocked;
+        }
+
+        // Pool B: Team tokens - calculate total unlocked (not claimable)
+        uint256 teamUnlocked = 0;
+        if (isTeamMember[user]) {
+            uint256 allocated = teamTokensAllocated[user];
+            uint256 govActions = userTotalGovernanceActions[user];
+            uint256 maxUnlocked = govActions * teamTokensPerGovAction;
+            teamUnlocked = maxUnlocked > allocated ? allocated : maxUnlocked;
+        }
+
+        return earnedUnlocked + teamUnlocked;
     }
     
     /**
@@ -449,30 +625,43 @@ contract OpenWorkRewardsContract is
 
     /**
      * @dev Mark tokens as claimed (called by NOWJC after successful cross-chain claim)
+     * UPDATED: Now handles FIFO claiming from both pools (earned first, then team)
      */
     function markTokensClaimed(address user, uint256 amountClaimed) external onlyJobContract returns (bool) {
         uint256 remainingToClaim = amountClaimed;
-        
-        // Mark claimed from bands in order (FIFO)
+
+        // STEP 1: Claim from earned rewards first (FIFO by band)
         for (uint256 i = 0; i < userBandRewards[user].length && remainingToClaim > 0; i++) {
             UserBandRewards memory bandReward = userBandRewards[user][i];
             uint256 bandClaimable = _calculateBandClaimable(user, bandReward);
-            
+
             if (bandClaimable > 0) {
-                uint256 claimFromThisBand = remainingToClaim > bandClaimable ? 
+                uint256 claimFromThisBand = remainingToClaim > bandClaimable ?
                     bandClaimable : remainingToClaim;
-                
+
                 // Update claimed amount for this band
                 uint256 bandIndex = userBandIndex[user][bandReward.band];
                 userBandRewards[user][bandIndex].tokensClaimed += claimFromThisBand;
-                
+
                 remainingToClaim -= claimFromThisBand;
             }
         }
-        
+
+        // STEP 2: If remaining, claim from team tokens
+        if (remainingToClaim > 0 && isTeamMember[user]) {
+            uint256 teamClaimable = getTeamTokensClaimable(user);
+            require(remainingToClaim <= teamClaimable, "Insufficient team tokens");
+
+            teamTokensClaimed[user] += remainingToClaim;
+            emit TeamTokensClaimed(user, remainingToClaim);
+            remainingToClaim = 0;
+        }
+
+        require(remainingToClaim == 0, "Insufficient claimable balance");
+
         // Update user total claimed
         userTotalTokensClaimed[user] += amountClaimed;
-        
+
         return true;
     }
 
@@ -569,5 +758,89 @@ contract OpenWorkRewardsContract is
             bandMaxAmount = band.maxAmount;
             governanceRewardRate = band.owPerDollar;
         }
+    }
+
+    // ==================== TEAM TOKENS VIEW FUNCTIONS ====================
+
+    /**
+     * @dev Get comprehensive token breakdown for a user
+     * Shows both earned and team tokens separately
+     */
+    function getUserTokenBreakdown(address user) external view returns (
+        uint256 earnedTotal,
+        uint256 earnedClaimable,
+        uint256 earnedClaimed,
+        uint256 teamAllocated,
+        uint256 teamClaimable,
+        uint256 teamClaimed,
+        uint256 governanceActions,
+        uint256 totalClaimable
+    ) {
+        // Earned pool data
+        earnedTotal = userTotalTokensEarned[user];
+        earnedClaimed = userTotalTokensClaimed[user];
+
+        // Calculate earned claimable
+        UserBandRewards[] memory rewards = userBandRewards[user];
+        for (uint256 i = 0; i < rewards.length; i++) {
+            earnedClaimable += _calculateBandClaimable(user, rewards[i]);
+        }
+
+        // Team pool data
+        teamAllocated = teamTokensAllocated[user];
+        teamClaimable = getTeamTokensClaimable(user);
+        teamClaimed = teamTokensClaimed[user];
+
+        // Global data
+        governanceActions = userTotalGovernanceActions[user];
+        totalClaimable = earnedClaimable + teamClaimable;
+    }
+
+    /**
+     * @dev Get team pool statistics
+     */
+    function getTeamPoolInfo() external view returns (
+        uint256 totalPool,
+        uint256 tokensPerAction,
+        uint256 actionsRequired,
+        uint256 totalAllocated,
+        uint256 totalClaimed,
+        uint256 memberCount
+    ) {
+        totalPool = TEAM_TOKENS_POOL;
+        tokensPerAction = teamTokensPerGovAction;
+        actionsRequired = TEAM_TOKENS_POOL / teamTokensPerGovAction;
+        totalAllocated = totalTeamTokensAllocated;
+
+        // Calculate total claimed
+        for (uint256 i = 0; i < teamMembers.length; i++) {
+            totalClaimed += teamTokensClaimed[teamMembers[i]];
+        }
+
+        memberCount = teamMembers.length;
+    }
+
+    /**
+     * @dev Get all team members
+     */
+    function getTeamMembers() external view returns (address[] memory) {
+        return teamMembers;
+    }
+
+    /**
+     * @dev Get team member info
+     */
+    function getTeamMemberInfo(address member) external view returns (
+        bool isMember,
+        uint256 allocated,
+        uint256 claimed,
+        uint256 claimable,
+        uint256 govActions
+    ) {
+        isMember = isTeamMember[member];
+        allocated = teamTokensAllocated[member];
+        claimed = teamTokensClaimed[member];
+        claimable = getTeamTokensClaimable(member);
+        govActions = userTotalGovernanceActions[member];
     }
 }
