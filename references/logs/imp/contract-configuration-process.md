@@ -28,22 +28,21 @@ Configure contracts in order of dependencies:
 
 ---
 
-## Arbitrum Sepolia Configuration Checklist
-
-### Contract Addresses Reference
+## Contract Addresses Reference
 
 | Contract | Proxy Address |
 |----------|---------------|
-| OpenworkGenesis | `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f` |
-| OpenWorkRewardsContract | `0x15CCa7C81A46059A46E794e6d0114c8cd9856715` |
-| NOWJC | `0x68093a84D63FB508bdc6A099CCc1292CE33Bb513` |
-| NativeChainBridge | `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7` |
-| CCTPv2Transceiver | `0xD22C85d18D188D37FD9D38974420a6BD68fFC315` |
-| NativeDAO | `0xB7Fb55CC44547fa9143431B71946fAC16D9EE357` |
-| NativeAthena | `0x20Ec5833261d9956399c3885b22439837a6eD7b2` |
-| NativeAthenaOracleManager | `0x32eceb266A07262B15308cc626B261E7d7C5E215` |
-| ProfileGenesis | `0x8c6bD1B1d8EFcF11c2B9D4c732e537e28d81870e` |
-| ProfileManager | `0x79d45FDA099E149a2bb263f29A2BE82afAEedC2D` |
+| OpenworkGenesis | `<GENESIS_PROXY>` |
+| OpenWorkRewardsContract | `<REWARDS_PROXY>` |
+| NOWJC | `<NOWJC_PROXY>` |
+| NativeChainBridge | `<NATIVE_BRIDGE>` |
+| CCTPv2Transceiver | `<CCTP_TRANSCEIVER>` |
+| NativeDAO | `<NATIVE_DAO_PROXY>` |
+| NativeAthena | `<NATIVE_ATHENA_PROXY>` |
+| NativeAthenaOracleManager | `<ORACLE_MANAGER_PROXY>` |
+| ProfileGenesis | `<PROFILE_GENESIS_PROXY>` |
+| ProfileManager | `<PROFILE_MANAGER_PROXY>` |
+| ActivityTracker | `<ACTIVITY_TRACKER_PROXY>` |
 
 ---
 
@@ -54,29 +53,29 @@ Configure contracts in order of dependencies:
 **Type:** Pure storage contract with authorization pattern
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
+- `owner`
 
 **Required Configuration:**
 Authorize all contracts that write to Genesis storage:
 
 ```bash
 # Authorize NOWJC
-source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeContract(address,bool)" 0x68093a84D63FB508bdc6A099CCc1292CE33Bb513 true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <GENESIS_PROXY> "authorizeContract(address,bool)" <NOWJC_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Authorize NativeDAO
-source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeContract(address,bool)" 0xB7Fb55CC44547fa9143431B71946fAC16D9EE357 true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <GENESIS_PROXY> "authorizeContract(address,bool)" <NATIVE_DAO_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Authorize NativeAthena
-source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeContract(address,bool)" 0x20Ec5833261d9956399c3885b22439837a6eD7b2 true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <GENESIS_PROXY> "authorizeContract(address,bool)" <NATIVE_ATHENA_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Authorize NativeAthenaOracleManager
-source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeContract(address,bool)" 0x32eceb266A07262B15308cc626B261E7d7C5E215 true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <GENESIS_PROXY> "authorizeContract(address,bool)" <ORACLE_MANAGER_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Authorize OpenWorkRewardsContract
-source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeContract(address,bool)" 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <GENESIS_PROXY> "authorizeContract(address,bool)" <REWARDS_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -85,20 +84,20 @@ source .env && cast send 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizeCo
 **Type:** Rewards/payment distribution
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `jobContract`: `0x68093a84D63FB508bdc6A099CCc1292CE33Bb513` (NOWJC)
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
+- `owner`
+- `jobContract` (NOWJC)
+- `genesis`
 
 **Required Configuration:**
 ```bash
-# Set ProfileGenesis ✅ DONE
-source .env && cast send 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "setProfileGenesis(address)" 0x8c6bD1B1d8EFcF11c2B9D4c732e537e28d81870e --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# Set ProfileGenesis
+source .env && cast send <REWARDS_PROXY> "setProfileGenesis(address)" <PROFILE_GENESIS_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
-# Set NativeDAO ✅ DONE
-source .env && cast send 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "setNativeDAO(address)" 0xB7Fb55CC44547fa9143431B71946fAC16D9EE357 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# Set NativeDAO
+source .env && cast send <REWARDS_PROXY> "setNativeDAO(address)" <NATIVE_DAO_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ✅ Configured
+**Status:** -
 
 ---
 
@@ -107,18 +106,38 @@ source .env && cast send 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "setNativeDA
 **Type:** Core job lifecycle management
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `bridge`: `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7`
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
-- `rewardsContract`: `0x15CCa7C81A46059A46E794e6d0114c8cd9856715`
-- `usdcToken`: `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d`
-- `cctpReceiver`: `0xD22C85d18D188D37FD9D38974420a6BD68fFC315`
+- `owner`
+- `bridge`
+- `genesis`
+- `rewardsContract`
+- `usdcToken`
+- `cctpReceiver`
 
 **Required Configuration:**
-- Check for `setAthena()` if dispute resolution needed
-- Check for `setDAO()` if governance needed
+```bash
+# Set Admin
+source .env && cast send <NOWJC_PROXY> "setAdmin(address,bool)" <ADMIN_ADDRESS> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
-**Status:** ❌ Check needed
+# Set CCTP Transceiver
+source .env && cast send <NOWJC_PROXY> "setCCTPTransceiver(address)" <CCTP_TRANSCEIVER> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set NativeAthena
+source .env && cast send <NOWJC_PROXY> "setNativeAthena(address)" <NATIVE_ATHENA_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set NativeDAO
+source .env && cast send <NOWJC_PROXY> "setNativeDAO(address)" <NATIVE_DAO_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set Treasury
+source .env && cast send <NOWJC_PROXY> "setTreasury(address)" <TREASURY_ADDRESS> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Authorize NativeChainBridge
+source .env && cast send <NOWJC_PROXY> "addAuthorizedContract(address)" <NATIVE_BRIDGE> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Authorize Owner/Admin
+source .env && cast send <NOWJC_PROXY> "addAuthorizedContract(address)" <ADMIN_ADDRESS> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+```
+
+**Status:** -
 
 ---
 
@@ -127,23 +146,35 @@ source .env && cast send 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "setNativeDA
 **Type:** LayerZero OApp for cross-chain messaging
 
 **Constructor Params Set:**
-- `endpoint`: `0x6EDCE65403992e310A62460808c4b910D972f10f` (LZ V2)
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `mainChainEid`: `40231` (Arbitrum Sepolia)
+- `endpoint` (LZ V2)
+- `owner`
+- `mainChainEid`
 
 **Required Configuration:**
 ```bash
-# Set Job Contract
-source .env && cast send 0xbCB4401e000bBbc9918030807c164d50d4dF9bc7 "setJobContract(address)" 0x68093a84D63FB508bdc6A099CCc1292CE33Bb513 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# Set NativeDAO Contract
+source .env && cast send <NATIVE_BRIDGE> "setNativeDaoContract(address)" <NATIVE_DAO_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set NativeAthena Contract
+source .env && cast send <NATIVE_BRIDGE> "setNativeAthenaContract(address)" <NATIVE_ATHENA_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set NativeOpenWorkJobContract
+source .env && cast send <NATIVE_BRIDGE> "setNativeOpenWorkJobContract(address)" <NOWJC_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Set Profile Manager
-source .env && cast send 0xbCB4401e000bBbc9918030807c164d50d4dF9bc7 "setProfileManager(address)" 0x79d45FDA099E149a2bb263f29A2BE82afAEedC2D --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <NATIVE_BRIDGE> "setProfileManager(address)" <PROFILE_MANAGER_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
-# Set Peer (for cross-chain - needs remote chain bridge address)
-# source .env && cast send 0xbCB4401e000bBbc9918030807c164d50d4dF9bc7 "setPeer(uint32,bytes32)" <REMOTE_EID> <REMOTE_BRIDGE_BYTES32> --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# Authorize NOWJC
+source .env && cast send <NATIVE_BRIDGE> "authorizeContract(address,bool)" <NOWJC_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Add Local Chain (for each local chain EID)
+source .env && cast send <NATIVE_BRIDGE> "addLocalChain(uint32)" <LOCAL_CHAIN_EID> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set Peer (for cross-chain - needs remote chain bridge address as bytes32)
+source .env && cast send <NATIVE_BRIDGE> "setPeer(uint32,bytes32)" <REMOTE_EID> <REMOTE_BRIDGE_BYTES32> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -152,20 +183,20 @@ source .env && cast send 0xbCB4401e000bBbc9918030807c164d50d4dF9bc7 "setProfileM
 **Type:** Circle CCTP V2 integration for USDC transfers
 
 **Constructor Params Set:**
-- `tokenMessenger`: `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA`
-- `messageTransmitter`: `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275`
-- `usdc`: `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d`
+- `tokenMessenger`
+- `messageTransmitter`
+- `usdc`
 
 **Required Configuration:**
 ```bash
 # Set NOWJC (for receiving USDC payments)
-source .env && cast send 0xD22C85d18D188D37FD9D38974420a6BD68fFC315 "setNOWJC(address)" 0x68093a84D63FB508bdc6A099CCc1292CE33Bb513 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <CCTP_TRANSCEIVER> "setNOWJC(address)" <NOWJC_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
 # Set destination domain (for cross-chain - needs remote chain CCTP domain)
-# source .env && cast send 0xD22C85d18D188D37FD9D38974420a6BD68fFC315 "setDestinationDomain(uint32,uint32)" <CHAIN_ID> <CCTP_DOMAIN> --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <CCTP_TRANSCEIVER> "setDestinationDomain(uint32,uint32)" <CHAIN_ID> <CCTP_DOMAIN> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -174,17 +205,26 @@ source .env && cast send 0xD22C85d18D188D37FD9D38974420a6BD68fFC315 "setNOWJC(ad
 **Type:** Governance and fee management
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `bridge`: `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7`
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
+- `owner`
+- `bridge`
+- `genesis`
 
 **Required Configuration:**
 ```bash
-# Set Athena (for dispute resolution)
-source .env && cast send 0xB7Fb55CC44547fa9143431B71946fAC16D9EE357 "setAthena(address)" 0x20Ec5833261d9956399c3885b22439837a6eD7b2 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+# Set NOWJ Contract
+source .env && cast send <NATIVE_DAO_PROXY> "setNOWJContract(address)" <NOWJC_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set Admin
+source .env && cast send <NATIVE_DAO_PROXY> "setAdmin(address,bool)" <ADMIN_ADDRESS> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Authorize NativeBridge (for cross-chain stake sync)
+source .env && cast send <NATIVE_DAO_PROXY> "addAuthorizedContract(address)" <NATIVE_BRIDGE> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set ActivityTracker
+source .env && cast send <NATIVE_DAO_PROXY> "setActivityTracker(address)" <ACTIVITY_TRACKER_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -193,19 +233,28 @@ source .env && cast send 0xB7Fb55CC44547fa9143431B71946fAC16D9EE357 "setAthena(a
 **Type:** AI-powered dispute resolution
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `daoContract`: `0xB7Fb55CC44547fa9143431B71946fAC16D9EE357`
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
-- `nowjContract`: `0x68093a84D63FB508bdc6A099CCc1292CE33Bb513`
-- `usdcToken`: `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d`
+- `owner`
+- `daoContract`
+- `genesis`
+- `nowjContract`
+- `usdcToken`
 
 **Required Configuration:**
 ```bash
 # Set Oracle Manager
-source .env && cast send 0x20Ec5833261d9956399c3885b22439837a6eD7b2 "setOracleManager(address)" 0x32eceb266A07262B15308cc626B261E7d7C5E215 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <NATIVE_ATHENA_PROXY> "setOracleManager(address)" <ORACLE_MANAGER_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set Bridge
+source .env && cast send <NATIVE_ATHENA_PROXY> "setBridge(address)" <NATIVE_BRIDGE> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set Admin
+source .env && cast send <NATIVE_ATHENA_PROXY> "setAdmin(address,bool)" <ADMIN_ADDRESS> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Set ActivityTracker
+source .env && cast send <NATIVE_ATHENA_PROXY> "setActivityTracker(address)" <ACTIVITY_TRACKER_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -214,14 +263,20 @@ source .env && cast send 0x20Ec5833261d9956399c3885b22439837a6eD7b2 "setOracleMa
 **Type:** Oracle management for Athena
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
-- `nativeAthena`: `0x20Ec5833261d9956399c3885b22439837a6eD7b2`
+- `owner`
+- `genesis`
+- `nativeAthena`
 
 **Required Configuration:**
-- Check for additional setters
+```bash
+# Set Authorized Caller (NativeAthena)
+source .env && cast send <ORACLE_MANAGER_PROXY> "setAuthorizedCaller(address,bool)" <NATIVE_ATHENA_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 
-**Status:** ❌ Check needed
+# Set ActivityTracker
+source .env && cast send <ORACLE_MANAGER_PROXY> "setActivityTracker(address)" <ACTIVITY_TRACKER_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+```
+
+**Status:** -
 
 ---
 
@@ -230,15 +285,15 @@ source .env && cast send 0x20Ec5833261d9956399c3885b22439837a6eD7b2 "setOracleMa
 **Type:** Pure storage contract for profile data
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
+- `owner`
 
 **Required Configuration:**
 ```bash
 # Authorize ProfileManager
-source .env && cast send 0x8c6bD1B1d8EFcF11c2B9D4c732e537e28d81870e "authorizeContract(address,bool)" 0x79d45FDA099E149a2bb263f29A2BE82afAEedC2D true --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $WALL2_KEY
+source .env && cast send <PROFILE_GENESIS_PROXY> "authorizeContract(address,bool)" <PROFILE_MANAGER_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
 ```
 
-**Status:** ❌ Pending
+**Status:** -
 
 ---
 
@@ -247,14 +302,40 @@ source .env && cast send 0x8c6bD1B1d8EFcF11c2B9D4c732e537e28d81870e "authorizeCo
 **Type:** Profile management logic
 
 **Init Params Set:**
-- `owner`: `0xfD08836eeE6242092a9c869237a8d122275b024A`
-- `bridge`: `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7`
-- `genesis`: `0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f`
+- `owner`
+- `bridge`
+- `genesis` (should be ProfileGenesis, not OpenworkGenesis)
 
 **Required Configuration:**
-- None (uses OpenworkGenesis, not ProfileGenesis - may need `setGenesis()` to ProfileGenesis)
+```bash
+# Set Genesis to ProfileGenesis (if incorrectly set during init)
+source .env && cast send <PROFILE_MANAGER_PROXY> "setGenesis(address)" <PROFILE_GENESIS_PROXY> --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+```
 
-**Status:** ✅ Check if ProfileGenesis needed
+**Status:** -
+
+---
+
+### 11. ActivityTracker
+
+**Type:** Oracle member activity tracking
+
+**Init Params Set:**
+- `owner`
+
+**Required Configuration:**
+```bash
+# Authorize NativeAthena as caller
+source .env && cast send <ACTIVITY_TRACKER_PROXY> "setAuthorizedCaller(address,bool)" <NATIVE_ATHENA_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Authorize NativeDAO as caller
+source .env && cast send <ACTIVITY_TRACKER_PROXY> "setAuthorizedCaller(address,bool)" <NATIVE_DAO_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+
+# Authorize OracleManager as caller
+source .env && cast send <ACTIVITY_TRACKER_PROXY> "setAuthorizedCaller(address,bool)" <ORACLE_MANAGER_PROXY> true --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+```
+
+**Status:** -
 
 ---
 
@@ -267,17 +348,29 @@ Recommended order for configuration:
    - ProfileGenesis → authorize ProfileManager
 
 2. **Set cross-references:**
-   - OpenWorkRewardsContract.setProfileGenesis() ✅
-   - OpenWorkRewardsContract.setNativeDAO() ✅
-   - NativeDAO.setAthena()
+   - OpenWorkRewardsContract.setProfileGenesis()
+   - OpenWorkRewardsContract.setNativeDAO()
+   - NativeDAO.setNOWJContract()
+   - NativeDAO.setActivityTracker()
    - NativeAthena.setOracleManager()
+   - NativeAthena.setBridge()
+   - NativeAthena.setActivityTracker()
+   - OracleManager.setActivityTracker()
 
 3. **Bridge configuration:**
-   - NativeChainBridge.setJobContract()
+   - NativeChainBridge.setNativeDaoContract()
+   - NativeChainBridge.setNativeAthenaContract()
+   - NativeChainBridge.setNativeOpenWorkJobContract()
    - NativeChainBridge.setProfileManager()
+   - NativeChainBridge.addLocalChain()
    - CCTPv2Transceiver.setNOWJC()
 
-4. **Cross-chain (after remote deployment):**
+4. **ActivityTracker configuration:**
+   - ActivityTracker.setAuthorizedCaller(NativeAthena)
+   - ActivityTracker.setAuthorizedCaller(NativeDAO)
+   - ActivityTracker.setAuthorizedCaller(OracleManager)
+
+5. **Cross-chain (after remote deployment):**
    - NativeChainBridge.setPeer()
    - CCTPv2Transceiver.setDestinationDomain()
 
@@ -289,11 +382,20 @@ After configuration, verify state:
 
 ```bash
 # Check OpenworkGenesis authorization
-cast call 0xCfb3de1501A3d4619d9E57CEAE75f5Dc5D86497f "authorizedContracts(address)" 0x68093a84D63FB508bdc6A099CCc1292CE33Bb513 --rpc-url $ARBITRUM_SEPOLIA_RPC_URL
+cast call <GENESIS_PROXY> "authorizedContracts(address)" <NOWJC_PROXY> --rpc-url $RPC_URL
 
 # Check RewardsContract profileGenesis
-cast call 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "profileGenesis()" --rpc-url $ARBITRUM_SEPOLIA_RPC_URL
+cast call <REWARDS_PROXY> "profileGenesis()" --rpc-url $RPC_URL
 
 # Check RewardsContract nativeDAO
-cast call 0x15CCa7C81A46059A46E794e6d0114c8cd9856715 "nativeDAO()" --rpc-url $ARBITRUM_SEPOLIA_RPC_URL
+cast call <REWARDS_PROXY> "nativeDAO()" --rpc-url $RPC_URL
+
+# Check NativeDAO activityTracker
+cast call <NATIVE_DAO_PROXY> "activityTracker()" --rpc-url $RPC_URL
+
+# Check NativeAthena activityTracker
+cast call <NATIVE_ATHENA_PROXY> "activityTracker()" --rpc-url $RPC_URL
+
+# Check ActivityTracker authorizedCallers
+cast call <ACTIVITY_TRACKER_PROXY> "authorizedCallers(address)" <NATIVE_ATHENA_PROXY> --rpc-url $RPC_URL
 ```

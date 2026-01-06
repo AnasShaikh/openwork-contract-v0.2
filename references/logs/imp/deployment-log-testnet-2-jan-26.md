@@ -490,6 +490,7 @@ transactionHash      0x... (configuration transaction)
 | NativeAthenaOracleManager | ✅ | ✅ | - |
 | ProfileGenesis | ✅ | ✅ | - |
 | ProfileManager | ✅ | ✅ | - |
+| ActivityTracker | ✅ | ✅ | - (Added Jan 5) |
 
 ---
 
@@ -717,10 +718,13 @@ None (standalone - NOWJC calls it directly via sendFast)
 
 ---
 
-## 6. NativeDAO (UPGRADED - Jan 2, 2026)
+## 6. NativeDAO (UPGRADED - Jan 5, 2026)
 
 **Proxy:** `0xB7Fb55CC44547fa9143431B71946fAC16D9EE357`
-**Implementation:** `0x77B53c3927fea2A4ebbeC144344Bee8FF243D95c` (upgraded)
+**Implementation:** `0xccce7077eC511B93BF4eff26eA0E093d6eF9F9fe` (upgraded Jan 5 - ActivityTracker)
+**Previous Implementations:**
+- `0x77B53c3927fea2A4ebbeC144344Bee8FF243D95c` (Jan 2 - security upgrade)
+- `0x8E2aDec68c8115eF54Cc5186f1d294152fd4C4ED` (initial)
 **Init params:** `owner`, `bridge`, `genesis`
 
 ### A. Config ON this contract:
@@ -730,9 +734,12 @@ None (standalone - NOWJC calls it directly via sendFast)
 | `setNOWJContract(address)` | `0x68093a84D63FB508bdc6A099CCc1292CE33Bb513` | ✅ |
 | `setAdmin(owner, true)` | `0xfD08836eeE6242092a9c869237a8d122275b024A` | ✅ |
 | `addAuthorizedContract(bridge)` | `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7` | ✅ |
+| `setActivityTracker(address)` | `0x36B6417228ADd2EF231E2676F00251736c6f8d06` | ✅ (Jan 5) |
+| `addAuthorizedContract(NativeBridge)` | `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7` | ✅ (Jan 6 fix) |
 
 *Note: Security upgrade added `authorizedContracts` pattern. Bridge must be authorized to call `updateStakeData()`.*
-*Upgrade TX: `0x0217c496fbe594e500176d291ea688b439314048485f5de4b4ba1f04c49cc6b0`*
+*Upgrade TX (Jan 2): `0x0217c496fbe594e500176d291ea688b439314048485f5de4b4ba1f04c49cc6b0`*
+*Upgrade TX (Jan 5 - ActivityTracker): `0x871cfaa8765501556e068d9e562d8808dc94f3f608aae57cf7e4260975277a5f`*
 
 ### B. Config needed FROM other contracts:
 
@@ -742,9 +749,11 @@ None (standalone - NOWJC calls it directly via sendFast)
 
 ---
 
-## 7. NativeAthena
+## 7. NativeAthena (UPGRADED - Jan 5, 2026)
 
 **Proxy:** `0x20Ec5833261d9956399c3885b22439837a6eD7b2`
+**Implementation:** `0x91cA073936A5EEe39f597D545ccE0A1AF63FeFF8` (upgraded Jan 5 - ActivityTracker)
+**Previous Implementation:** `0x0ad0306EAfCBf121Ed9990055b89e1249011455F` (initial)
 **Init params:** `owner`, `daoContract`, `genesis`, `nowjContract`, `usdcToken`
 
 ### A. Config ON this contract:
@@ -753,8 +762,11 @@ None (standalone - NOWJC calls it directly via sendFast)
 |----------|--------|--------|
 | `setOracleManager(address)` | `0x32eceb266A07262B15308cc626B261E7d7C5E215` | ✅ |
 | `setBridge(address)` | `0xbCB4401e000bBbc9918030807c164d50d4dF9bc7` | ✅ |
+| `setActivityTracker(address)` | `0x36B6417228ADd2EF231E2676F00251736c6f8d06` | ✅ (Jan 5) |
+| `setAdmin(owner, true)` | `0xfD08836eeE6242092a9c869237a8d122275b024A` | ✅ (Jan 5) |
 
 *Note: `setGenesis`, `setNOWJContract`, `setDAOContract`, `setUSDCToken` already set via init*
+*Upgrade TX (Jan 5 - ActivityTracker): `0xc4c75a2c6a05217213698f493f97ca7548b045bbb8ef2d57da521d9575766ffe`*
 
 ### B. Config needed FROM other contracts:
 
@@ -764,9 +776,11 @@ None (standalone - NOWJC calls it directly via sendFast)
 
 ---
 
-## 8. NativeAthenaOracleManager
+## 8. NativeAthenaOracleManager (UPGRADED - Jan 5, 2026)
 
 **Proxy:** `0x32eceb266A07262B15308cc626B261E7d7C5E215`
+**Implementation:** `0x5Ce4790511A7313AB55d678C4bCa7e910dD56324` (upgraded Jan 5 - ActivityTracker)
+**Previous Implementation:** `0xaa877a0f6ad070A9BB110fD4d5eFcc606691D45F` (initial)
 **Init params:** `owner`, `genesis`, `nativeAthena`
 
 ### A. Config ON this contract:
@@ -774,10 +788,12 @@ None (standalone - NOWJC calls it directly via sendFast)
 | Function | Target | Status |
 |----------|--------|--------|
 | `setAuthorizedCaller(address, bool)` | `0x20Ec5833261d9956399c3885b22439837a6eD7b2` (NativeAthena) | ✅ |
+| `setActivityTracker(address)` | `0x36B6417228ADd2EF231E2676F00251736c6f8d06` | ✅ (Jan 5) |
 | `setAdmin(address, bool)` | Optional | - |
 | `setMainDAO(address)` | Optional | - |
 
 *Note: `setGenesis`, `setNativeAthena` already set via init*
+*Upgrade TX (Jan 5 - ActivityTracker): `0x5c50e0c05a66766f7c502df7cea116647ae57304346a888a31654e1ca1af19ee`*
 
 ### B. Config needed FROM other contracts:
 
@@ -1486,3 +1502,72 @@ Before deploying to mainnet, update the following values:
 ---
 
 *Deployment completed: January 2, 2026*
+
+---
+
+# Upgrades - January 5, 2026
+
+## ActivityTracker Deployment & Contract Upgrades
+
+Three contracts were upgraded to integrate ActivityTracker for oracle member activity tracking.
+Full details: `references/logs/imp/activity-tracker-deployment-log-jan-5.md`
+
+### New Deployments
+
+| Contract | Type | Address |
+|----------|------|---------|
+| ActivityTracker Impl | UUPS | `0x206b2999000e45fA981698AA4F3E6dA6fcc0F711` |
+| ActivityTracker Proxy | UUPS | `0x36B6417228ADd2EF231E2676F00251736c6f8d06` |
+
+### Upgraded Implementations
+
+| Contract | Proxy | New Implementation | Previous Implementation |
+|----------|-------|-------------------|------------------------|
+| NativeAthena | `0x20Ec5833261d9956399c3885b22439837a6eD7b2` | `0x91cA073936A5EEe39f597D545ccE0A1AF63FeFF8` | `0x0ad0306EAfCBf121Ed9990055b89e1249011455F` |
+| NativeDAO | `0xB7Fb55CC44547fa9143431B71946fAC16D9EE357` | `0xccce7077eC511B93BF4eff26eA0E093d6eF9F9fe` | `0x77B53c3927fea2A4ebbeC144344Bee8FF243D95c` |
+| OracleManager | `0x32eceb266A07262B15308cc626B261E7d7C5E215` | `0x5Ce4790511A7313AB55d678C4bCa7e910dD56324` | `0xd8Ba6A37Ba9ee222593e6CbF005273897dd06c98` |
+
+### ActivityTracker Configuration
+
+| Step | Action | TX Hash |
+|------|--------|---------|
+| 1 | Set ActivityTracker on NativeAthena | `0x0d3a1fc845c52001806ab2560a96e5114555d26b7539a333a0a34161fbb6ffcf` |
+| 2 | Set ActivityTracker on NativeDAO | `0xcea11644a818bd127b553e4c7b19e0f6ef1c79a40c2df91b782ae8dc55ded255` |
+| 3 | Set ActivityTracker on OracleManager | `0xbc48e451a6cf03f394ac3da0656d56e88f471c962be5be89cb63bba0596bcac8` |
+| 4 | Authorize NativeAthena on ActivityTracker | `0xd8e3fa036ec6d54b33053bb6612139862e13b611f715ab66c801bda4c1153e69` |
+| 5 | Authorize NativeDAO on ActivityTracker | `0xebe6a2d59a4089d1041979e2f18b2264ae92874325eaf049a4197d364eabfcb1` |
+| 6 | Authorize OracleManager on ActivityTracker | `0x139872501d0ca6601e998b72d8d18cffa1f48007d354ba712a501262d80a4dd8` |
+
+### Admin Configuration (Jan 5)
+
+| Contract | Action | TX Hash |
+|----------|--------|---------|
+| NativeAthena | Add WALL2 as admin | `0x8260dd22983d57cd26b4b86811bee8b275a2e14830116ac5d0f64a6ca83cde11` |
+| NativeDAO | Add WALL2 as admin | `0x99f2e53d02e0dbdfcf0daa9aa2d6cc155b987d46bee9d737c76fd3b2ec6b32bd` |
+
+---
+
+# Configuration Fixes - January 6, 2026
+
+## NativeBridge Cross-Chain Stake Sync Fix
+
+During MainDAO staking testing, cross-chain stake sync to NativeDAO was failing silently.
+Full details: `references/logs/imp/cross-chain-stake-sync-debug-jan-6.md`
+
+### Root Cause
+1. NativeBridge.nativeDaoContract was `0x0` (not configured)
+2. NativeDAO.authorizedContracts[NativeBridge] was `false`
+
+### Fixes Applied
+
+| Contract | Action | TX Hash |
+|----------|--------|---------|
+| NativeBridge (Arb) | setNativeDaoContract(NativeDAO) | `0xa2471652e1be2d642b4ab1056fe9c4460982c613eb4494ac105816915c2458be` |
+| NativeDAO (Arb) | addAuthorizedContract(NativeBridge) | `0x9bbb9703fd1478c66597ac4db0b3d7c674f50c66acd60ffcd32bd398fbb70a5a` |
+
+### Important Note
+When calling `stake()` or `unstake()` on MainDAO, use `--gas-limit 500000` to ensure sufficient gas for the LayerZero cross-chain call inside the try/catch block.
+
+---
+
+*Last updated: January 6, 2026*
