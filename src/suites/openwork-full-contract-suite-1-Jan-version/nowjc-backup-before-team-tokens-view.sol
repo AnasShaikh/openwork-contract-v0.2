@@ -112,7 +112,6 @@ interface IOpenWorkRewards {
     function getUserTotalClaimableTokens(address user) external view returns (uint256);
     function getUserTotalUnlockedTokens(address user) external view returns (uint256); // SECURITY FIX
     function markTokensClaimed(address user, uint256 amount) external returns (bool);
-    function teamTokensAllocated(address user) external view returns (uint256);
 }
 
 interface INativeBridge {
@@ -583,13 +582,6 @@ contract NativeOpenWorkJobContract is
             return rewardsContract.getUserGovernanceActionsInBand(user, band);
         }
         return genesis.getUserGovernanceActionsInBand(user, band);
-    }
-
-    function teamTokensAllocated(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.teamTokensAllocated(user);
-        }
-        return 0;
     }
 
     function calculateTokensForAmount(address /* user */, uint256 additionalAmount) external view returns (uint256) {

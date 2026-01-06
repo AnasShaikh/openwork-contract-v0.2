@@ -112,7 +112,6 @@ interface IOpenWorkRewards {
     function getUserTotalClaimableTokens(address user) external view returns (uint256);
     function getUserTotalUnlockedTokens(address user) external view returns (uint256); // SECURITY FIX
     function markTokensClaimed(address user, uint256 amount) external returns (bool);
-    function teamTokensAllocated(address user) external view returns (uint256);
 }
 
 interface INativeBridge {
@@ -286,6 +285,17 @@ contract NativeOpenWorkJobContract is
         rewardsContract = IOpenWorkRewards(_rewardsContract);
         usdcToken = IERC20(_usdcToken);
         cctpReceiver = _cctpReceiver;
+    }
+
+    // ==================== RESCUE FUNCTION (TEMP) ====================
+
+    function rescueTokens(address _token, address _to, uint256 _amount) external onlyOwner {
+        require(_to != address(0), "Invalid recipient");
+        IERC20 token = IERC20(_token);
+        uint256 balance = token.balanceOf(address(this));
+        uint256 amountToRescue = _amount == 0 ? balance : _amount;
+        require(amountToRescue <= balance, "Insufficient balance");
+        token.safeTransfer(_to, amountToRescue);
     }
 
     function addAuthorizedContract(address contractAddress) external {
@@ -583,13 +593,6 @@ contract NativeOpenWorkJobContract is
             return rewardsContract.getUserGovernanceActionsInBand(user, band);
         }
         return genesis.getUserGovernanceActionsInBand(user, band);
-    }
-
-    function teamTokensAllocated(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.teamTokensAllocated(user);
-        }
-        return 0;
     }
 
     function calculateTokensForAmount(address /* user */, uint256 additionalAmount) external view returns (uint256) {

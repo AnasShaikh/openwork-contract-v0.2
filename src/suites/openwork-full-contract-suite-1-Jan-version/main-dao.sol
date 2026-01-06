@@ -16,13 +16,13 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-interface IThirdChainBridge {
+interface IMainBridge {
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
         bytes calldata _options
     ) external payable;
-    
+
     function quoteNativeChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -30,7 +30,7 @@ interface IThirdChainBridge {
 
     function sendUpgradeCommand(
         uint32 targetChainId,
-        address targetProxy, 
+        address targetProxy,
         address newImplementation,
         bytes calldata _options
     ) external payable;
@@ -50,7 +50,7 @@ contract MainDAO is
     UUPSUpgradeable
 {
     IERC20 public openworkToken;
-    IThirdChainBridge public bridge;
+    IMainBridge public bridge;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     uint32 public chainId;
     
@@ -122,7 +122,7 @@ contract MainDAO is
         
         openworkToken = IERC20(_openworkToken);
         chainId = _chainId;
-        bridge = IThirdChainBridge(_bridge);
+        bridge = IMainBridge(_bridge);
 
         // Initialize governance parameters
         proposalThresholdAmount = 100 * 10**18;
@@ -147,7 +147,7 @@ contract MainDAO is
     
     function setBridge(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Invalid bridge address");
-        bridge = IThirdChainBridge(_bridge);
+        bridge = IMainBridge(_bridge);
         emit BridgeUpdated(_bridge);
     }
     

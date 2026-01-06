@@ -31,7 +31,7 @@ interface INativeOpenWorkJobContract {
     function startJob(address jobGiver, string memory jobId, uint256 applicationId, bool useApplicantMilestones) external;
     function submitWork(address applicant, string memory jobId, string memory submissionHash) external;
     function releasePayment(address jobGiver, string memory jobId, uint256 amount) external;
-    function handleReleasePaymentCrossChain(address jobGiver, string memory jobId, uint256 amount, uint32 targetChainDomain, address targetRecipient) external;
+    function releasePaymentCrossChain(address jobGiver, string memory jobId, uint256 amount, uint32 targetChainDomain, address targetRecipient) external;
     function lockNextMilestone(address caller, string memory jobId, uint256 lockedAmount) external;
     function releasePaymentAndLockNext(address jobGiver, string memory jobId, uint256 releasedAmount, uint256 lockedAmount) external;
     function incrementGovernanceAction(address user) external;
@@ -311,7 +311,7 @@ contract NativeChainBridge is OAppSender, OAppReceiver {
         } else if (keccak256(bytes(functionName)) == keccak256(bytes("releasePaymentCrossChain"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address jobGiver, string memory jobId, uint256 amount, uint32 targetChainDomain, address targetRecipient) = abi.decode(_message, (string, address, string, uint256, uint32, address));
-            INativeOpenWorkJobContract(nativeOpenWorkJobContract).handleReleasePaymentCrossChain(jobGiver, jobId, amount, targetChainDomain, targetRecipient);
+            INativeOpenWorkJobContract(nativeOpenWorkJobContract).releasePaymentCrossChain(jobGiver, jobId, amount, targetChainDomain, targetRecipient);
         } else if (keccak256(bytes(functionName)) == keccak256(bytes("startDirectContract"))) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             (, address jobGiver, address jobTaker, string memory jobId, string memory jobDetailHash, string[] memory descriptions, uint256[] memory amounts, uint32 jobTakerChainDomain) = abi.decode(_message, (string, address, address, string, string, string[], uint256[], uint32));

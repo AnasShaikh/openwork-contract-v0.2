@@ -54,6 +54,9 @@ interface IOpenworkGenesis {
     function updateDelegatedVotingPower(address delegatee, uint256 powerChange, bool increase) external;
     function addProposalId(uint256 proposalId) external;
     function removeStaker(address staker) external;
+    
+    // NEW: Activity tracking for oracle members
+    function updateMemberActivity(address member) external;
 
     // DAO data getters
     function getStake(address staker) external view returns (Stake memory);
@@ -67,11 +70,6 @@ interface IOpenworkGenesis {
     function getProposalCount() external view returns (uint256);
     function getIsStaker(address staker) external view returns (bool);
     function getActiveStakersCount() external view returns (uint256);
-}
-
-// Interface for ActivityTracker contract (separated from Genesis due to size limits)
-interface IActivityTracker {
-    function updateMemberActivity(address member) external;
 }
 
 contract NativeDAO is 
@@ -90,10 +88,7 @@ contract NativeDAO is
     
     // Genesis storage contract
     IOpenworkGenesis public genesis;
-
-    // ActivityTracker contract for member activity tracking
-    IActivityTracker public activityTracker;
-
+    
     // Governance parameters (same as main contract)
     uint256 public proposalStakeThreshold;
     uint256 public votingStakeThreshold;
@@ -210,11 +205,6 @@ contract NativeDAO is
         address oldGenesis = address(genesis);
         genesis = IOpenworkGenesis(_genesis);
         emit GenesisUpdated(oldGenesis, _genesis);
-    }
-
-    function setActivityTracker(address _activityTracker) external {
-        require(admins[msg.sender], "Admin");
-        activityTracker = IActivityTracker(_activityTracker);
     }
     
     // ==================== GOVERNANCE ELIGIBILITY CHECK FUNCTIONS ====================
@@ -404,8 +394,8 @@ contract NativeDAO is
             }
         }
         
-        // Record member activity for oracle tracking
-        activityTracker.updateMemberActivity(account);
+        // NEW: Record member activity for oracle tracking
+        genesis.updateMemberActivity(account);
         
         // IMPORTANT: Call local NOWJC to increment governance action
         require(address(nowjContract) != address(0), "NOWJ not set");
@@ -431,8 +421,8 @@ contract NativeDAO is
             }
         }
         
-        // Record member activity for oracle tracking
-        activityTracker.updateMemberActivity(msg.sender);
+        // NEW: Record member activity for oracle tracking
+        genesis.updateMemberActivity(msg.sender);
         
         // IMPORTANT: Call local NOWJC to increment governance action
         require(address(nowjContract) != address(0), "NOWJ not set");

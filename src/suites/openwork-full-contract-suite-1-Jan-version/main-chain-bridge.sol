@@ -15,7 +15,7 @@ interface IMainDAO {
     function handleSyncVotingPower(address user, uint256 totalRewards, uint32 sourceChain) external;
 }
 
-contract ThirdChainBridge is OAppSender, OAppReceiver {
+contract MainBridge is OAppSender, OAppReceiver {
     
     // Authorized contracts that can use the bridge
     mapping(address => bool) public authorizedContracts;
@@ -27,10 +27,8 @@ contract ThirdChainBridge is OAppSender, OAppReceiver {
     address public mainDaoContract;
     address public rewardsContract;
     
-    // Chain endpoints - this bridge handles multiple destination chains
-    uint32 public nativeChainEid;      // Chain where Native contracts are deployed
-    uint32 public athenaClientChainEid; // Chain where AthenaClient is deployed
-    uint32 public lowjcChainEid;       // Chain where LOWJC is deployed
+    // Chain endpoint - Native chain where core contracts are deployed
+    uint32 public nativeChainEid;
     
     // Events
     event CrossChainMessageSent(string indexed functionName, uint32 dstEid, bytes payload);
@@ -54,13 +52,9 @@ contract ThirdChainBridge is OAppSender, OAppReceiver {
     constructor(
         address _endpoint,
         address _owner,
-        uint32 _nativeChainEid,
-        uint32 _athenaClientChainEid,
-        uint32 _lowjcChainEid
+        uint32 _nativeChainEid
     ) OAppCore(_endpoint, _owner) Ownable(_owner) {
         nativeChainEid = _nativeChainEid;
-        athenaClientChainEid = _athenaClientChainEid;
-        lowjcChainEid = _lowjcChainEid;
     }
     
     // Override the conflicting oAppVersion function
@@ -161,38 +155,6 @@ function sendUpgradeCommand(
         emit CrossChainMessageSent(_functionName, nativeChainEid, _payload);
     }
     
-    function sendToAthenaClientChain(
-        string memory _functionName,
-        bytes memory _payload,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        _lzSend(
-            athenaClientChainEid,
-            _payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent(_functionName, athenaClientChainEid, _payload);
-    }
-    
-    function sendToLowjcChain(
-        string memory _functionName,
-        bytes memory _payload,
-        bytes calldata _options
-    ) external payable onlyAuthorized {
-        _lzSend(
-            lowjcChainEid,
-            _payload,
-            _options,
-            MessagingFee(msg.value, 0),
-            payable(msg.sender)
-        );
-        
-        emit CrossChainMessageSent(_functionName, lowjcChainEid, _payload);
-    }
-    
     function sendToSpecificChain(
         string memory _functionName,
         uint32 _dstEid,
@@ -288,22 +250,6 @@ function sendUpgradeCommand(
         return msgFee.nativeFee;
     }
     
-    function quoteAthenaClientChain(
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(athenaClientChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
-    function quoteLowjcChain(
-        bytes calldata _payload,
-        bytes calldata _options
-    ) external view returns (uint256 fee) {
-        MessagingFee memory msgFee = _quote(lowjcChainEid, _payload, _options, false);
-        return msgFee.nativeFee;
-    }
-    
     function quoteSpecificChain(
         uint32 _dstEid,
         bytes calldata _payload,
@@ -378,28 +324,10 @@ function sendUpgradeCommand(
         emit ChainEndpointUpdated("native", _nativeChainEid);
     }
     
-    function updateAthenaClientChainEid(uint32 _athenaClientChainEid) external onlyOwner {
-        athenaClientChainEid = _athenaClientChainEid;
-        emit ChainEndpointUpdated("athenaClient", _athenaClientChainEid);
-    }
-    
-    function updateLowjcChainEid(uint32 _lowjcChainEid) external onlyOwner {
-        lowjcChainEid = _lowjcChainEid;
-        emit ChainEndpointUpdated("lowjc", _lowjcChainEid);
-    }
-    
-    function updateChainEndpoints(uint32 _nativeChainEid, uint32 _athenaClientChainEid, uint32 _lowjcChainEid) external onlyOwner {
-        nativeChainEid = _nativeChainEid;
-        athenaClientChainEid = _athenaClientChainEid;
-        lowjcChainEid = _lowjcChainEid;
-        emit ChainEndpointUpdated("native", _nativeChainEid);
-        emit ChainEndpointUpdated("athenaClient", _athenaClientChainEid);
-        emit ChainEndpointUpdated("lowjc", _lowjcChainEid);
-    }
-    
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");
-        payable(owner()).transfer(balance);
+        (bool success, ) = payable(owner()).call{value: balance}("");
+        require(success, "Withdraw failed");
     }
 }

@@ -21,20 +21,20 @@ interface IMainDAO {
     ) external;
 }
 
-interface IThirdChainBridge {
+interface IMainBridge {
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
         bytes calldata _options
     ) external payable;
-    
+
     function quoteNativeChain(
         bytes calldata _payload,
         bytes calldata _options
     ) external view returns (uint256 fee);
 }
 
-contract CrossChainRewardsContract is 
+contract MainRewardsContract is
     Initializable,
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
@@ -42,7 +42,7 @@ contract CrossChainRewardsContract is
 {
     IERC20 public openworkToken;
     IMainDAO public mainDAO;
-    IThirdChainBridge public bridge;
+    IMainBridge public bridge;
     
     // User referrer mapping
     mapping(address => address) public userReferrers;
@@ -79,7 +79,7 @@ contract CrossChainRewardsContract is
         __UUPSUpgradeable_init();
         
         openworkToken = IERC20(_openworkToken);
-        bridge = IThirdChainBridge(_bridge);
+        bridge = IMainBridge(_bridge);
         _initializeAuthorizedChains();
     }
     
@@ -141,7 +141,7 @@ contract CrossChainRewardsContract is
     
     function setBridge(address _bridge) external onlyOwner {
         address oldBridge = address(bridge);
-        bridge = IThirdChainBridge(_bridge);
+        bridge = IMainBridge(_bridge);
         emit BridgeUpdated(oldBridge, _bridge);
     }
     

@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * - ERC20Votes for governance voting (checkpoints, delegation)
  * - Ownable for administrative functions
  */
-contract VotingToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
+contract OpenworkToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
 
     // Initial supply of tokens (adjust as needed)
     uint256 public constant INITIAL_SUPPLY = 1_000_000_000 * 10**18; // 1 billion tokens

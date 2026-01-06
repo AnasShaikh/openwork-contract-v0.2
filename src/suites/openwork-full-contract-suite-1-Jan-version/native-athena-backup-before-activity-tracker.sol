@@ -195,10 +195,7 @@ interface IOpenworkGenesis {
     function getAskAthenaVoters(uint256 athenaId) external view returns (VoterData[] memory);
     function getDisputeVoterClaimAddress(string memory disputeId, address voter) external view returns (address);
     
-}
-
-// Interface for ActivityTracker contract (separated from Genesis due to size limits)
-interface IActivityTracker {
+    // NEW: Activity tracking for oracle members
     function memberLastActivity(address member) external view returns (uint256);
     function oracleActiveStatus(string memory oracleName) external view returns (bool);
     function updateMemberActivity(address member) external;
@@ -230,14 +227,7 @@ contract NativeAthena is
     
     // Bridge for cross-chain communication
     address public bridge;
-
-    // ActivityTracker contract for member activity and oracle status
-    IActivityTracker public activityTracker;
-
-    // Admin pattern (matches NOWJC)
-    mapping(address => bool) public admins;
-    address public mainDAO;
-
+    
     // Add voting type enum
     enum VotingType {
         Dispute,
@@ -281,10 +271,9 @@ contract NativeAthena is
     // NEW: Oracle activity events
     event OracleStatusUpdated(string indexed oracleName, bool isActive, uint256 activeMemberCount);
     event MemberActivityThresholdUpdated(uint256 newThresholdDays);
-    event AdminUpdated(address indexed admin, bool status);
-
+    
     modifier onlyDAO() {
-        require(msg.sender == daoContract, "DAO");
+        require(msg.sender == daoContract, "Only DAO can call this function");
         _;
     }
     
@@ -316,130 +305,102 @@ contract NativeAthena is
         minOracleMembers = 3;
         votingPeriodMinutes = 60; // 1 hour default
         minStakeRequired = 100;
-        admins[_owner] = true;
     }
-
+    
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
-        require(admins[_msgSender()] || address(bridge) == _msgSender(), "Auth");
+        require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
     }
     
     function upgradeFromDAO(address newImplementation) external {
-        require(msg.sender == address(bridge), "Bridge");
+        require(msg.sender == address(bridge), "Only bridge can upgrade");
         upgradeToAndCall(newImplementation, "");
     }
     
     // ==================== ADMIN FUNCTIONS ====================
-
-    function setAdmin(address _admin, bool _status) external {
-        require(msg.sender == owner() || msg.sender == mainDAO, "Auth");
-        admins[_admin] = _status;
-        emit AdminUpdated(_admin, _status);
-    }
-
-    function setMainDAO(address _mainDAO) external {
-        require(msg.sender == owner(), "Auth");
-        mainDAO = _mainDAO;
-    }
-
-    function setGenesis(address _genesis) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setGenesis(address _genesis) external onlyOwner {
         address oldGenesis = address(genesis);
         genesis = IOpenworkGenesis(_genesis);
         emit GenesisUpdated(oldGenesis, _genesis);
     }
-
-    function setNOWJContract(address _nowjContract) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setNOWJContract(address _nowjContract) external onlyOwner {
         address oldContract = address(nowjContract);
         nowjContract = INativeOpenWorkJobContract(_nowjContract);
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
-
-    function setOracleManager(address _oracleManager) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setOracleManager(address _oracleManager) external onlyOwner {
         oracleManager = IOracleManager(_oracleManager);
     }
-
-    function setDAOContract(address _daoContract) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setDAOContract(address _daoContract) external onlyOwner {
         address oldDAO = daoContract;
         daoContract = _daoContract;
         emit DAOContractUpdated(oldDAO, _daoContract);
     }
-
-    function setUSDCToken(address _usdcToken) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setUSDCToken(address _usdcToken) external onlyOwner {
         address oldToken = address(usdcToken);
         usdcToken = IERC20(_usdcToken);
         emit USDCTokenUpdated(oldToken, _usdcToken);
     }
-
-    function setBridge(address _bridge) external {
-        require(admins[msg.sender], "Auth");
+    
+    function setBridge(address _bridge) external onlyOwner {
         address oldBridge = bridge;
         bridge = _bridge;
         emit BridgeUpdated(oldBridge, _bridge);
     }
-
-    function setActivityTracker(address _activityTracker) external {
-        require(admins[msg.sender], "Auth");
-        activityTracker = IActivityTracker(_activityTracker);
-    }
-
-    function updateMinOracleMembers(uint256 _newMinMembers) external {
-        require(admins[msg.sender], "Auth");
+    
+    function updateMinOracleMembers(uint256 _newMinMembers) external onlyOwner {
         minOracleMembers = _newMinMembers;
     }
     
-    function updateVotingPeriod(uint256 _newPeriodMinutes) external {
-        require(admins[msg.sender], "Auth");
+    function updateVotingPeriod(uint256 _newPeriodMinutes) external onlyOwner {
         votingPeriodMinutes = _newPeriodMinutes;
     }
     
-    function updateMinStakeRequired(uint256 _newMinStake) external {
-        require(admins[msg.sender], "Auth");
+    function updateMinStakeRequired(uint256 _newMinStake) external onlyOwner {
         minStakeRequired = _newMinStake;
     }
     
-    function updateMemberActivityThreshold(uint256 _newThresholdDays) external {
-        require(admins[msg.sender], "Auth");
+    function updateMemberActivityThreshold(uint256 _newThresholdDays) external onlyOwner {
         memberActivityThresholdDays = _newThresholdDays;
         emit MemberActivityThresholdUpdated(_newThresholdDays);
     }
     
     // ==================== ORACLE ACTIVE STATUS FUNCTIONS ====================
-
+    
     /**
      * @notice Update the active status of an oracle by counting active members
-     * @dev Only admins or OracleManager can call. Expensive operation - only call periodically.
+     * @dev Anyone can call this function (they pay gas). Expensive operation - only call periodically.
      * @param _oracleName Name of the oracle to update
      */
-    function updateOracleActiveStatus(string memory _oracleName) external {
-        require(admins[msg.sender] || msg.sender == address(oracleManager), "Auth");
+    function updateOracleActiveStatus(string memory _oracleName) public {
         address[] memory members = genesis.getOracleMembers(_oracleName);
         uint256 activeCount = 0;
         uint256 threshold = memberActivityThresholdDays * 1 days;
-
+        
         for (uint256 i = 0; i < members.length; i++) {
-            uint256 lastActivity = activityTracker.memberLastActivity(members[i]);
+            uint256 lastActivity = genesis.memberLastActivity(members[i]);
             if (lastActivity > 0 && (block.timestamp - lastActivity) <= threshold) {
                 activeCount++;
             }
         }
-
+        
         bool isActive = activeCount >= minOracleMembers;
-        activityTracker.setOracleActiveStatus(_oracleName, isActive);
-
+        genesis.setOracleActiveStatus(_oracleName, isActive);
+        
         emit OracleStatusUpdated(_oracleName, isActive, activeCount);
     }
-
+    
     /**
      * @notice Check if an oracle is active (cheap read from cache)
      * @param _oracleName Name of the oracle to check
      * @return bool True if oracle is active
      */
     function isOracleActive(string memory _oracleName) public view returns (bool) {
-        return activityTracker.oracleActiveStatus(_oracleName);
+        return genesis.oracleActiveStatus(_oracleName);
     }
     
     /**
@@ -465,9 +426,9 @@ contract NativeAthena is
         address[] memory members = genesis.getOracleMembers(_oracleName);
         uint256 activeCount = 0;
         uint256 threshold = memberActivityThresholdDays * 1 days;
-
+        
         for (uint256 i = 0; i < members.length; i++) {
-            uint256 lastActivity = activityTracker.memberLastActivity(members[i]);
+            uint256 lastActivity = genesis.memberLastActivity(members[i]);
             if (lastActivity > 0 && (block.timestamp - lastActivity) <= threshold) {
                 activeCount++;
             }
@@ -481,11 +442,11 @@ contract NativeAthena is
         require(msg.sender == bridge, "Only bridge");        
         
         // NEW: Check if oracle is active before accepting dispute
-        require(isOracleActive(oracleName), "Oracle inactive");
+        require(isOracleActive(oracleName), "Oracle not active - cannot register dispute");
         
         // Check if oracle has minimum required members
         IOpenworkGenesis.Oracle memory oracle = genesis.getOracle(oracleName);
-        require(oracle.members.length >= minOracleMembers, "Min members");
+        require(oracle.members.length >= minOracleMembers, "Oracle not active");
         
         // Increment dispute counter for this job
         jobDisputeCounters[jobId]++;
@@ -506,7 +467,7 @@ contract NativeAthena is
         require(msg.sender == bridge, "Only bridge");
         
         // NEW: Check oracle must be active before accepting skill verification
-        require(isOracleActive(targetOracleName), "Oracle inactive");
+        require(isOracleActive(targetOracleName), "Skill verification not available - oracle is not active (needs 20+ active members)");
         
         uint256 applicationId = genesis.applicationCounter();
         genesis.setSkillApplication(applicationId, applicant, applicationHash, feeAmount, targetOracleName);
@@ -515,7 +476,7 @@ contract NativeAthena is
     }
     
     function handleAskAthena(address applicant, string memory description, string memory hash, string memory targetOracle, string memory fees) external {
-        require(msg.sender == address(bridge), "Bridge");
+        require(msg.sender == address(bridge), "Only bridge can call this function");
         
         uint256 athenaId = genesis.askAthenaCounter();
         genesis.setAskAthenaApplication(athenaId, applicant, description, hash, targetOracle, fees);
@@ -571,9 +532,8 @@ contract NativeAthena is
         string[] memory _shortDescriptions,
         string[] memory _hashOfDetails,
         address[][] memory _skillVerifiedAddresses
-    ) external {
-        require(admins[msg.sender], "Auth");
-        require(address(oracleManager) != address(0), "No OracleMgr");
+    ) external onlyOwner {
+        require(address(oracleManager) != address(0), "Oracle manager not set");
         oracleManager.addOrUpdateOracle(_names, _members, _shortDescriptions, _hashOfDetails, _skillVerifiedAddresses);
     }
     
@@ -584,12 +544,12 @@ contract NativeAthena is
         string memory _hashOfDetails,
         address[] memory _skillVerifiedAddresses
     ) external onlyDAO {
-        require(address(oracleManager) != address(0), "No OracleMgr");
+        require(address(oracleManager) != address(0), "Oracle manager not set");
         oracleManager.addSingleOracle(_name, _members, _shortDescription, _hashOfDetails, _skillVerifiedAddresses);
     }
 
     function addMembers(address[] memory _members, string memory _oracleName) external onlyDAO {
-        require(address(oracleManager) != address(0), "No OracleMgr");
+        require(address(oracleManager) != address(0), "Oracle manager not set");
         oracleManager.addMembers(_members, _oracleName);
     }
 
@@ -600,12 +560,12 @@ contract NativeAthena is
     }
     
     function removeMemberFromOracle(string memory _oracleName, address _memberToRemove) external onlyDAO {
-        require(address(oracleManager) != address(0), "No OracleMgr");
+        require(address(oracleManager) != address(0), "Oracle manager not set");
         oracleManager.removeMemberFromOracle(_oracleName, _memberToRemove);
     }
 
     function removeOracle(string[] memory _oracleNames) external onlyDAO {
-        require(address(oracleManager) != address(0), "No OracleMgr");
+        require(address(oracleManager) != address(0), "Oracle manager not set");
         oracleManager.removeOracle(_oracleNames);
     }
     
@@ -613,10 +573,10 @@ contract NativeAthena is
     
     function finalizeSkillVerification(uint256 _applicationId) external {
         IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(_applicationId);
-        require(application.applicant != address(0), "No app");
-        require(!application.isFinalized, "Finalized");
+        require(application.applicant != address(0), "Application does not exist");
+        require(!application.isFinalized, "Already finalized");
         require(application.isVotingActive, "Voting not active");
-        require(block.timestamp > application.timeStamp + (votingPeriodMinutes * 60), "Wait");
+        require(block.timestamp > application.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
         
         bool result = application.votesFor > application.votesAgainst;
         genesis.finalizeSkillVerification(_applicationId, result);
@@ -640,11 +600,11 @@ contract NativeAthena is
         bool _voteFor, 
         address _claimAddress
     ) external {
-        require(canVote(msg.sender), "No stake");
-        require(_claimAddress != address(0), "No claim");
+        require(canVote(msg.sender), "Insufficient stake or earned tokens to vote");
+        require(_claimAddress != address(0), "Claim address cannot be zero");
         
         uint256 voteWeight = getUserVotingPower(msg.sender);
-        require(voteWeight > 0, "No power");
+        require(voteWeight > 0, "No voting power");
         
         // STORE VOTER DATA IN GENESIS - before routing
         if (_votingType == VotingType.Dispute) {
@@ -674,15 +634,15 @@ contract NativeAthena is
         uint256 voteWeight
     ) internal {
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-        require(dispute.timeStamp > 0, "No dispute");
-        require(!genesis.hasUserVotedOnDispute(_disputeId, msg.sender), "Voted");
-        require(dispute.isVotingActive, "No voting");
-        require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Expired");
+        require(dispute.timeStamp > 0, "Dispute does not exist");
+        require(!genesis.hasUserVotedOnDispute(_disputeId, msg.sender), "Already voted on this dispute");
+        require(dispute.isVotingActive, "Voting is not active for this dispute");
+        require(block.timestamp <= dispute.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
         
         genesis.setDisputeVote(_disputeId, msg.sender);
         
         // NEW: Record member activity
-        activityTracker.updateMemberActivity(msg.sender);
+        genesis.updateMemberActivity(msg.sender);
         
         if (_voteFor) {
             genesis.updateDisputeVotes(_disputeId, dispute.votesFor + voteWeight, dispute.votesAgainst);
@@ -705,7 +665,7 @@ contract NativeAthena is
         
         // Get application from genesis
         IOpenworkGenesis.SkillVerificationApplication memory application = genesis.getSkillApplication(applicationId);
-        require(application.applicant != address(0), "No app");
+        require(application.applicant != address(0), "Application does not exist");
         require(!genesis.hasUserVotedOnSkillApplication(applicationId, msg.sender), "Already voted");
         require(application.isVotingActive, "Voting not active");
         require(block.timestamp <= application.timeStamp + (votingPeriodMinutes * 60), "Voting expired");
@@ -714,7 +674,7 @@ contract NativeAthena is
         if (isOracleActive(application.targetOracleName)) {
             require(
                 isOracleMember(msg.sender, application.targetOracleName),
-                "Oracle member"
+                "Only oracle members can vote on active oracle applications"
             );
         }
         // If oracle is inactive, existing canVote() check allows all DAO members
@@ -723,7 +683,7 @@ contract NativeAthena is
         genesis.setSkillApplicationVote(applicationId, msg.sender);
         
         // NEW: Record member activity
-        activityTracker.updateMemberActivity(msg.sender);
+        genesis.updateMemberActivity(msg.sender);
         
         // Update vote counts in genesis
         if (_voteFor) {
@@ -747,16 +707,16 @@ contract NativeAthena is
         
         // Get askAthena application from genesis
         IOpenworkGenesis.AskAthenaApplication memory athenaApp = genesis.getAskAthenaApplication(athenaId);
-        require(athenaApp.applicant != address(0), "No app");
-        require(!genesis.hasUserVotedOnAskAthena(athenaId, msg.sender), "Voted");
-        require(athenaApp.isVotingActive, "No voting");
-        require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Expired");
+        require(athenaApp.applicant != address(0), "AskAthena application does not exist");
+        require(!genesis.hasUserVotedOnAskAthena(athenaId, msg.sender), "Already voted on this AskAthena application");
+        require(athenaApp.isVotingActive, "Voting is not active for this AskAthena application");
+        require(block.timestamp <= athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period has expired");
         
         // Record vote in genesis
         genesis.setAskAthenaVote(athenaId, msg.sender);
         
         // NEW: Record member activity
-        activityTracker.updateMemberActivity(msg.sender);
+        genesis.updateMemberActivity(msg.sender);
         
         // Update vote counts in genesis
         if (_voteFor) {
@@ -817,12 +777,12 @@ contract NativeAthena is
     }
     
     function settleDispute(string memory _disputeId) external {
-        require(disputeStartTimes[_disputeId] > 0, "No dispute");
-        require(block.timestamp >= disputeStartTimes[_disputeId] + (votingPeriodMinutes * 60), "Not ended");
+        require(disputeStartTimes[_disputeId] > 0, "Dispute does not exist");
+        require(block.timestamp >= disputeStartTimes[_disputeId] + (votingPeriodMinutes * 60), "Voting period not ended");
         
         IOpenworkGenesis.Dispute memory dispute = genesis.getDispute(_disputeId);
-        require(dispute.timeStamp > 0, "No dispute");
-        require(!dispute.isFinalized, "Finalized");
+        require(dispute.timeStamp > 0, "Dispute does not exist");
+        require(!dispute.isFinalized, "Dispute already finalized");
         
         bool disputeRaiserWins = dispute.votesFor > dispute.votesAgainst;
         genesis.finalizeDispute(_disputeId, disputeRaiserWins);
@@ -893,10 +853,10 @@ contract NativeAthena is
     
     function settleAskAthena(uint256 _athenaId) external {
         IOpenworkGenesis.AskAthenaApplication memory athenaApp = genesis.getAskAthenaApplication(_athenaId);
-        require(athenaApp.applicant != address(0), "No app");
-        require(!athenaApp.isFinalized, "Finalized");
+        require(athenaApp.applicant != address(0), "AskAthena application does not exist");
+        require(!athenaApp.isFinalized, "Already finalized");
         require(athenaApp.isVotingActive, "Voting not active");
-        require(block.timestamp > athenaApp.timeStamp + (votingPeriodMinutes * 60), "Wait");
+        require(block.timestamp > athenaApp.timeStamp + (votingPeriodMinutes * 60), "Voting period not expired");
         
         bool result = athenaApp.votesFor > athenaApp.votesAgainst;
         genesis.finalizeAskAthena(_athenaId, result);
@@ -1028,13 +988,11 @@ contract NativeAthena is
     }
     
     // ==================== EMERGENCY FUNCTIONS ====================
-
-    function withdraw() external {
-        require(admins[msg.sender], "Auth");
+    
+    function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
-        require(balance > 0, "No balance");
-        (bool success, ) = payable(msg.sender).call{value: balance}("");
-        require(success, "Failed");
+        require(balance > 0, "No ETH balance to withdraw");
+        payable(owner()).transfer(balance);
     }
     
     // Allow contract to receive ETH for paying fees

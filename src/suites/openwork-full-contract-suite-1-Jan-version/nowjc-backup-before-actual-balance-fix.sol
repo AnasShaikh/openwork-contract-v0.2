@@ -112,7 +112,6 @@ interface IOpenWorkRewards {
     function getUserTotalClaimableTokens(address user) external view returns (uint256);
     function getUserTotalUnlockedTokens(address user) external view returns (uint256); // SECURITY FIX
     function markTokensClaimed(address user, uint256 amount) external returns (bool);
-    function teamTokensAllocated(address user) external view returns (uint256);
 }
 
 interface INativeBridge {
@@ -585,13 +584,6 @@ contract NativeOpenWorkJobContract is
         return genesis.getUserGovernanceActionsInBand(user, band);
     }
 
-    function teamTokensAllocated(address user) external view returns (uint256) {
-        if (address(rewardsContract) != address(0)) {
-            return rewardsContract.teamTokensAllocated(user);
-        }
-        return 0;
-    }
-
     function calculateTokensForAmount(address /* user */, uint256 additionalAmount) external view returns (uint256) {
         if (address(rewardsContract) != address(0)) {
             uint256 currentPlatformTotal = genesis.totalPlatformPayments();
@@ -804,39 +796,6 @@ contract NativeOpenWorkJobContract is
         emit WorkSubmitted(_jobId, _applicant, _submissionHash, job.currentMilestone);
     }
 
-    /**
-     * @dev Release payment for current milestone via CCTP cross-chain transfer
-     * @param _jobGiver Address of the job creator
-     * @param _jobId Unique identifier for the job
-     * @param _amount Expected milestone amount (for validation against expected milestone)
-     * @param _targetChainDomain CCTP domain of destination chain (2=OP, 3=Arb, 0=Eth)
-     * @param _targetRecipient Address to receive payment on destination chain
-     *
-     * 🎯 MILESTONE MENTAL MODEL (CRITICAL - READ BEFORE MODIFYING):
-     * ================================================================
-     * currentMilestone represents: "Which milestone is currently being worked on"
-     *
-     * Milestone Lifecycle:
-     * - Job created: currentMilestone = 0 (unassigned, no work started)
-     * - startJob(): currentMilestone = 1 (worker assigned, working on milestone 1)
-     * - releasePayment(): Pays for milestone 1, currentMilestone STAYS 1
-     * - lockNextMilestone(): currentMilestone = 2 (now working on milestone 2)
-     * - releasePayment(): Pays for milestone 2, currentMilestone STAYS 2
-     * - Job completed when: currentMilestone == finalMilestones.length (paid last milestone)
-     *
-     * ⚠️  THIS FUNCTION DOES NOT INCREMENT MILESTONE - Only lockNextMilestone() does
-     * ⚠️  Milestone increments represent "starting work on next milestone", not payment
-     *
-     * Example (Single Milestone):
-     *   currentMilestone = 0 → startJob() → 1 → releasePayment() → 1 → COMPLETED ✅
-     *
-     * Example (Two Milestones):
-     *   currentMilestone = 0 → startJob() → 1
-     *                        → releasePaymentAndLockNext() → 2 (increment happens here)
-     *                        → releasePayment() → 2 → COMPLETED ✅
-     *
-     * Access control: Enforced by handleReleasePaymentCrossChain (bridge only)
-     */
     function releasePaymentCrossChain(
         address _jobGiver,
         string memory _jobId,
@@ -844,83 +803,65 @@ contract NativeOpenWorkJobContract is
         uint32 _targetChainDomain,
         address _targetRecipient
     ) internal {
-        // ========== VALIDATION ==========
+        // Access control enforced by handleReleasePaymentCrossChain (bridge only)
         require(cctpTransceiver != address(0), "Transceiver not set");
         require(_targetRecipient != address(0), "Invalid recipient");
         require(_amount > 0, "Invalid amount");
 
-        // Load job data (cached in memory for gas efficiency)
         IOpenworkGenesis.Job memory job = genesis.getJob(_jobId);
         require(job.selectedApplicant != address(0), "No applicant");
         require(job.status == IOpenworkGenesis.JobStatus.InProgress, "Job not in progress");
-
-        // Cache current milestone for readability and gas optimization
-        uint256 currentMilestoneNum = job.currentMilestone;
-        require(currentMilestoneNum > 0 && currentMilestoneNum <= job.finalMilestones.length, "Invalid milestone");
-
-        // ========== BALANCE VALIDATION ==========
-        // Get actual USDC balance (accounts for CCTP 0.01% cross-chain fee)
-        // WARNING: Uses total contract balance - not safe with concurrent jobs having funds
-        uint256 actualBalance = usdcToken.balanceOf(address(this));
-
-        // Validate balance meets minimum threshold (99.99% of expected milestone amount)
-        // CCTP charges 0.01% fee: 1,000,000 USDC sent → 999,900 USDC received
-        uint256 milestoneIndex = currentMilestoneNum - 1;
+        require(job.currentMilestone > 0 && job.currentMilestone <= job.finalMilestones.length, "Invalid milestone");
+        
+        // ✅ MILESTONE GUARD: Validate amount is within CCTP fee tolerance (0.01%)
+        uint256 milestoneIndex = job.currentMilestone - 1;
         uint256 expectedMilestone = job.finalMilestones[milestoneIndex].amount;
-        uint256 minAcceptable = (expectedMilestone * 9999) / 10000;  // 0.01% tolerance
-
-        require(actualBalance >= minAcceptable, "Insufficient balance after CCTP fees");
-
-        // Safety check: Detect potential concurrent job conflicts
-        // If balance significantly exceeds expected, multiple jobs may have funds in contract
-        require(actualBalance <= expectedMilestone * 2, "Unexpected balance - possible concurrent job conflict");
-
-        // ========== COMMISSION CALCULATION ==========
-        // Calculate commission on ACTUAL received balance (not expected amount)
-        // This ensures CCTP fee is absorbed by reducing commission base
-        uint256 commission = calculateCommission(actualBalance);
-
-        // Safety: Ensure balance can cover commission (prevents underflow in Solidity 0.8+)
-        require(actualBalance > commission, "Balance insufficient for commission");
-
-        uint256 netAmount = actualBalance - commission;
+        uint256 minAcceptable = (expectedMilestone * 9999) / 10000; // Allow 0.01% CCTP fee
+        require(_amount >= minAcceptable, "Insufficient balance after CCTP fees");
+        
+        // Calculate and deduct commission
+        uint256 commission = calculateCommission(_amount);
+        uint256 netAmount = _amount - commission;
+        
+        // Accumulate commission
         accumulatedCommission += commission;
-
-        // ========== CCTP CROSS-CHAIN TRANSFER ==========
-        // Convert recipient address to CCTP bytes32 format
+        
+        // Convert target recipient address to bytes32 for CCTP  
         bytes32 mintRecipient = bytes32(uint256(uint160(_targetRecipient)));
-
-        // Approve CCTP transceiver to spend net payment amount
+        
+        // ✅ CRITICAL FIX: Approve CCTP transceiver to spend USDC before sendFast()
         usdcToken.approve(cctpTransceiver, netAmount);
-
-        // Execute CCTP cross-chain transfer (incurs additional 0.01% fee on destination)
+        
+        // Send USDC via CCTP to target chain NOWJC (not end user)
+        // Target chain NOWJC will handle distribution to end user
         ICCTPTransceiver(cctpTransceiver).sendFast(
-            netAmount,              // Amount after commission (6 decimals)
-            _targetChainDomain,     // CCTP domain (2=OP Sepolia, 3=Arb Sepolia, 0=Eth Sepolia)
-            mintRecipient,          // Recipient on destination chain (bytes32 format)
-            1000                    // maxFee (consistent with LOWJC implementation)
+            netAmount,           // Amount of USDC to send after commission (6 decimals)
+            _targetChainDomain,  // CCTP domain (2=OP Sepolia, 3=Arb Sepolia, etc)
+            mintRecipient,       // Target chain NOWJC address as bytes32
+            1000                 // maxFee (1000 to match working LOWJC implementation)
         );
-
-        // ========== STATE UPDATES ==========
-        // Process rewards calculation BEFORE other state updates (uses current state)
+        
+        // Delegate to RewardsContract for token calculation and distribution (with net amount)
+        // IMPORTANT: Call this BEFORE updating platform total so rewards contract gets correct values
         _processRewardsForPayment(_jobGiver, _jobId, netAmount);
 
-        // Update total amount paid for this job
+        // Update job total paid in Genesis (with net amount)
         genesis.updateJobTotalPaid(_jobId, netAmount);
-
-        // ⚠️  CRITICAL: NO MILESTONE INCREMENT HERE
-        // currentMilestone stays the same - only lockNextMilestone() increments it
-        // This function pays for the CURRENT milestone being worked on
-
-        // Check if job should be marked as completed (just paid the last milestone)
-        if (currentMilestoneNum >= job.finalMilestones.length) {
+        
+        // ✅ INCREMENT MILESTONE: Move to next milestone after successful payment
+        genesis.setJobCurrentMilestone(_jobId, job.currentMilestone + 1);
+        
+        // Check if job should be completed (after increment)
+        if (job.currentMilestone + 1 > job.finalMilestones.length) {
             genesis.updateJobStatus(_jobId, IOpenworkGenesis.JobStatus.Completed);
             emit JobStatusChanged(_jobId, JobStatus.Completed);
         }
-
-        // ========== EVENTS ==========
-        emit CommissionDeducted(_jobId, actualBalance, commission, netAmount);
-        emit PaymentReleased(_jobId, _jobGiver, _targetRecipient, netAmount, currentMilestoneNum);
+        
+        // Emit commission event
+        emit CommissionDeducted(_jobId, _amount, commission, netAmount);
+        
+        // Note: USDC sent directly to target recipient via CCTP
+        emit PaymentReleased(_jobId, _jobGiver, _targetRecipient, netAmount, job.currentMilestone);
     }
     
     function lockNextMilestone(address /* _caller */, string memory _jobId, uint256 _lockedAmount) external {
