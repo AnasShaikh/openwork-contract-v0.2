@@ -95,11 +95,21 @@ contract ETHRewardsContract is
 
     // ==================== MESSAGE HANDLERS ====================
 
+    /// @notice Handle profile creation from cross-chain message
+    /// @param user Address of the user creating profile
+    /// @param referrer Address of the referrer (can be zero)
+    /// @param sourceChain LayerZero endpoint ID of source chain
     function handleCreateProfile(address user, address referrer, uint32 sourceChain) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
         _createProfile(user, referrer, sourceChain);
     }
 
+    /// @notice Handle stake data update from cross-chain message
+    /// @param staker Address of the staker
+    /// @param amount Stake amount
+    /// @param unlockTime Timestamp when stake unlocks
+    /// @param durationMinutes Stake duration in minutes
+    /// @param isActive Whether stake is active
     function handleStakeDataUpdate(address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive, uint32 /* sourceChain */) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
 
@@ -140,22 +150,31 @@ contract ETHRewardsContract is
 
     // ==================== ADMIN FUNCTIONS ====================
 
+    /// @notice Set the bridge contract address
+    /// @param _bridge Address of the ETHLZOpenworkBridge contract
     function setBridge(address _bridge) external onlyOwner {
         address oldBridge = address(bridge);
         bridge = IETHLZOpenworkBridge(_bridge);
         emit BridgeUpdated(oldBridge, _bridge);
     }
 
+    /// @notice Set the Openwork token address
+    /// @param _token Address of the Openwork ERC20 token
     function setOpenworkToken(address _token) external onlyOwner {
         openworkToken = IERC20(_token);
         emit ContractUpdated("OpenworkToken", _token);
     }
 
+    /// @notice Set the Main DAO contract address
+    /// @param _mainDAO Address of the ETHOpenworkDAO contract
     function setMainDAO(address _mainDAO) external onlyOwner {
         mainDAO = IETHOpenworkDAO(_mainDAO);
         emit ContractUpdated("MainDAO", _mainDAO);
     }
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || msg.sender == address(mainDAO), "Auth");
         admins[_admin] = _status;
@@ -175,6 +194,10 @@ contract ETHRewardsContract is
         chainNames[40231] = "Arbitrum Sepolia";
     }
 
+    /// @notice Update authorization status for a source chain
+    /// @param _chainEid LayerZero endpoint ID of the chain
+    /// @param _authorized True to authorize, false to block
+    /// @param _chainName Human-readable name of the chain
     function updateAuthorizedChain(uint32 _chainEid, bool _authorized, string memory _chainName) external onlyOwner {
         authorizedChains[_chainEid] = _authorized;
         if (_authorized && bytes(_chainName).length > 0) {
@@ -244,6 +267,13 @@ contract ETHRewardsContract is
 
     // ==================== CROSS-CHAIN STAKE UPDATE FUNCTIONS ====================
 
+    /// @notice Send stake data update to Native chain
+    /// @param staker Address of the staker
+    /// @param amount Stake amount
+    /// @param unlockTime Timestamp when stake unlocks
+    /// @param durationMinutes Stake duration in minutes
+    /// @param isActive Whether stake is active
+    /// @param _options LayerZero messaging options
     function sendStakeUpdateCrossChain(
         address staker,
         uint256 amount,
@@ -267,6 +297,14 @@ contract ETHRewardsContract is
         bridge.sendToNativeChain{value: msg.value}("updateStakeData", payload, _options);
     }
 
+    /// @notice Get fee quote for sending stake update cross-chain
+    /// @param staker Address of the staker
+    /// @param amount Stake amount
+    /// @param unlockTime Timestamp when stake unlocks
+    /// @param durationMinutes Stake duration in minutes
+    /// @param isActive Whether stake is active
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteStakeUpdate(
         address staker,
         uint256 amount,
@@ -290,6 +328,10 @@ contract ETHRewardsContract is
 
     // ==================== VIEW FUNCTIONS ====================
 
+    /// @notice Get user's reward information
+    /// @param user Address to query
+    /// @return claimableAmount Amount user can claim
+    /// @return totalClaimed Total amount user has claimed
     function getUserRewardInfo(address user) external view returns (
         uint256 claimableAmount,
         uint256 totalClaimed
@@ -298,11 +340,17 @@ contract ETHRewardsContract is
         totalClaimed = userTotalClaimed[user];
     }
 
+    /// @notice Get user's referrer address
+    /// @param user Address to query
+    /// @return Referrer address (zero if none)
     function getUserReferrer(address user) external view returns (address) {
         return userReferrers[user];
     }
 
-    // Cross-chain info functions
+    /// @notice Get list of authorized chains with their status
+    /// @return chains Array of chain endpoint IDs
+    /// @return authorized Array of authorization status
+    /// @return names Array of chain names
     function getAuthorizedChains() external view returns (uint32[] memory chains, bool[] memory authorized, string[] memory names) {
         // Get common testnet chains
         uint32[] memory commonChains = new uint32[](3);
@@ -321,6 +369,11 @@ contract ETHRewardsContract is
         }
     }
 
+    /// @notice Get fee quote for syncing claim data to Native chain
+    /// @param user Address of the user
+    /// @param claimAmount Amount being claimed
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteClaimSync(
         address user,
         uint256 claimAmount,
@@ -336,10 +389,16 @@ contract ETHRewardsContract is
         return bridge.quoteNativeChain(payload, _options);
     }
 
+    /// @notice Check if a chain is authorized for cross-chain messages
+    /// @param chainEid LayerZero endpoint ID of the chain
+    /// @return True if authorized
     function isChainAuthorized(uint32 chainEid) external view returns (bool) {
         return authorizedChains[chainEid];
     }
 
+    /// @notice Get the human-readable name of a chain
+    /// @param chainEid LayerZero endpoint ID of the chain
+    /// @return Chain name
     function getChainName(uint32 chainEid) external view returns (string memory) {
         return chainNames[chainEid];
     }

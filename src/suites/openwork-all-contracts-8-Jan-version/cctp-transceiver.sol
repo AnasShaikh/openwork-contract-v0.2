@@ -101,13 +101,20 @@ contract CCTPTransceiver {
         admins[msg.sender] = true;        // Owner is default admin
     }
     
+    /// @notice Transfer ownership of the contract to a new address
+    /// @param newOwner Address of the new owner
     function transferOwnership(address newOwner) external onlyOwner {
         require(newOwner != address(0), "Invalid owner");
         address oldOwner = owner;
         owner = newOwner;
         emit OwnershipTransferred(oldOwner, newOwner);
     }
-    
+
+    /// @notice Send USDC cross-chain via CCTP fast transfer
+    /// @param amount Amount of USDC to send
+    /// @param destinationDomain CCTP domain ID of the destination chain
+    /// @param mintRecipient Recipient address on destination chain (as bytes32)
+    /// @param maxFee Maximum fee to pay for the transfer
     function sendFast(
         uint256 amount,
         uint32 destinationDomain,
@@ -197,6 +204,9 @@ contract CCTPTransceiver {
     
     // ==================== ADMIN MANAGEMENT ====================
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external onlyOwner {
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
@@ -204,6 +214,8 @@ contract CCTPTransceiver {
 
     // ==================== REWARD CONFIG (ADMIN ONLY) ====================
 
+    /// @notice Set the maximum reward amount for confirmers
+    /// @param newAmount New maximum reward in wei
     function setMaxRewardAmount(uint256 newAmount) external {
         require(admins[msg.sender], "Only admin");
         uint256 oldAmount = maxRewardAmount;
@@ -211,6 +223,8 @@ contract CCTPTransceiver {
         emit MaxRewardAmountUpdated(oldAmount, newAmount);
     }
 
+    /// @notice Set the estimated gas usage for reward calculations
+    /// @param newGas New gas estimate for receive function
     function setEstimatedGasUsage(uint256 newGas) external {
         require(admins[msg.sender], "Only admin");
         uint256 oldGas = estimatedGasUsage;
@@ -218,6 +232,8 @@ contract CCTPTransceiver {
         emit EstimatedGasUpdated(oldGas, newGas);
     }
 
+    /// @notice Set the reward multiplier for gas-based reward calculations
+    /// @param newMultiplier New multiplier (1-10x gas cost)
     function setRewardMultiplier(uint256 newMultiplier) external {
         require(admins[msg.sender], "Only admin");
         require(newMultiplier > 0 && newMultiplier <= 10, "Invalid");
@@ -226,11 +242,14 @@ contract CCTPTransceiver {
         emit RewardMultiplierUpdated(oldMultiplier, newMultiplier);
     }
 
+    /// @notice Add ETH to the reward pool for paying confirmers
     function fundRewardPool() external payable {
         require(admins[msg.sender], "Only admin");
         require(msg.value > 0, "Must send ETH");
     }
 
+    /// @notice Withdraw ETH from the contract
+    /// @param amount Amount of ETH to withdraw
     function withdrawETH(uint256 amount) external {
         require(admins[msg.sender], "Only admin");
         require(address(this).balance >= amount, "Insufficient");
@@ -238,13 +257,17 @@ contract CCTPTransceiver {
         require(success, "Failed");
     }
 
+    /// @notice Recover stuck USDC from the contract
+    /// @param amount Amount of USDC to recover
     function recoverUSDC(uint256 amount) external {
         require(admins[msg.sender], "Only admin");
         require(usdc.transfer(msg.sender, amount), "Transfer failed");
     }
-    
+
     // ==================== REWARD MANAGEMENT ====================
-    
+
+    /// @notice Deposit a reward for a specific message hash
+    /// @param messageHash The keccak256 hash of the CCTP message
     function depositReward(bytes32 messageHash) external payable {
         require(msg.value > 0, "Must deposit reward");
         pendingRewards[messageHash] += msg.value;
@@ -253,18 +276,22 @@ contract CCTPTransceiver {
         emit RewardDeposited(messageHash, msg.sender, msg.value);
     }
     
+    /// @notice Claim a pending reward as the confirmed message relayer
+    /// @param messageHash The keccak256 hash of the CCTP message
     function claimReward(bytes32 messageHash) external nonReentrant {
         require(confirmedBy[messageHash] == msg.sender, "Not the confirmer");
         uint256 reward = pendingRewards[messageHash];
         require(reward > 0, "No reward available");
-        
+
         pendingRewards[messageHash] = 0;
         (bool success, ) = msg.sender.call{value: reward}("");
         require(success, "Claim transfer failed");
-        
+
         emit RewardClaimed(messageHash, msg.sender, reward);
     }
-    
+
+    /// @notice Refund a deposited reward if message not confirmed within timeout
+    /// @param messageHash The keccak256 hash of the CCTP message
     function refundReward(bytes32 messageHash) external nonReentrant {
         require(msg.sender == rewardDepositor[messageHash], "Not the depositor");
         require(block.timestamp >= depositTime[messageHash] + REFUND_TIMEOUT, "Timeout not reached");
@@ -280,20 +307,34 @@ contract CCTPTransceiver {
     }
     
     // ==================== VIEW FUNCTIONS ====================
-    
+
+    /// @notice Get the current ETH balance of the reward pool
+    /// @return Current balance in wei
     function getPoolBalance() external view returns (uint256) {
         return address(this).balance;
     }
-    
+
+    /// @notice Calculate the current dynamic reward based on gas price
+    /// @return Calculated reward amount in wei (capped at maxRewardAmount)
     function calculateCurrentReward() external view returns (uint256) {
         uint256 reward = estimatedGasUsage * tx.gasprice * rewardMultiplier;
         return reward > maxRewardAmount ? maxRewardAmount : reward;
     }
     
+    /// @notice Check if a message has a pending reward
+    /// @param messageHash The keccak256 hash of the CCTP message
+    /// @return True if reward is pending
     function hasPendingReward(bytes32 messageHash) external view returns (bool) {
         return pendingRewards[messageHash] > 0;
     }
-    
+
+    /// @notice Get detailed reward information for a message
+    /// @param messageHash The keccak256 hash of the CCTP message
+    /// @return reward Pending reward amount
+    /// @return depositor Address that deposited the reward
+    /// @return depositedAt Timestamp when reward was deposited
+    /// @return confirmer Address that confirmed the message
+    /// @return confirmedAt Timestamp when message was confirmed
     function getRewardInfo(bytes32 messageHash) external view returns (
         uint256 reward,
         address depositor,
@@ -310,18 +351,28 @@ contract CCTPTransceiver {
         );
     }
     
+    /// @notice Check if a reward can be refunded (timeout passed)
+    /// @param messageHash The keccak256 hash of the CCTP message
+    /// @return True if refund is available
     function canRefund(bytes32 messageHash) external view returns (bool) {
-        return block.timestamp >= depositTime[messageHash] + REFUND_TIMEOUT 
+        return block.timestamp >= depositTime[messageHash] + REFUND_TIMEOUT
             && pendingRewards[messageHash] > 0;
     }
-    
+
+    /// @notice Convert an address to bytes32 format for CCTP
+    /// @param addr Address to convert
+    /// @return Address as bytes32
     function addressToBytes32(address addr) external pure returns (bytes32) {
         return bytes32(uint256(uint160(addr)));
     }
     
+    /// @notice Get the keccak256 hash of a CCTP message
+    /// @param message The CCTP message bytes
+    /// @return The keccak256 hash
     function getMessageHash(bytes calldata message) external pure returns (bytes32) {
         return keccak256(message);
     }
-    
+
+    /// @notice Receive ETH for the reward pool
     receive() external payable {}
 }

@@ -216,7 +216,9 @@ contract NativeOpenworkGenesis is Initializable, UUPSUpgradeable {
     }
 
     // ==================== INITIALIZER ====================
-    
+
+    /// @notice Initialize the storage contract
+    /// @param _owner Address of contract owner
     function initialize(address _owner) public initializer {
         __UUPSUpgradeable_init();
         owner = _owner;
@@ -225,30 +227,41 @@ contract NativeOpenworkGenesis is Initializable, UUPSUpgradeable {
 
     // ==================== UPGRADE AUTHORIZATION ====================
 
+    /// @dev Authorize upgrade to new implementation (admin only)
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
         require(admins[msg.sender], "Admin");
     }
 
     // ==================== ACCESS CONTROL ====================
-    
+
+    /// @notice Transfer contract ownership to a new address
+    /// @param newOwner Address of the new owner
     function transferOwnership(address newOwner) external onlyOwner {
         require(newOwner != address(0), "0");
         address oldOwner = owner;
         owner = newOwner;
         emit OwnershipTransferred(oldOwner, newOwner);
     }
-    
+
+    /// @notice Authorize or revoke a contract's access to storage functions
+    /// @param _contract Address of the contract
+    /// @param _authorized True to authorize, false to revoke
     function authorizeContract(address _contract, bool _authorized) external onlyOwner {
         authorizedContracts[_contract] = _authorized;
         emit ContractAuthorized(_contract, _authorized);
     }
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner || msg.sender == nativeDAO, "Auth");
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
     }
 
+    /// @notice Set the NativeDAO governance contract
+    /// @param _nativeDAO Address of NativeDAO contract
     function setNativeDAO(address _nativeDAO) external onlyOwner {
         address oldDAO = nativeDAO;
         nativeDAO = _nativeDAO;

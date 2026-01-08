@@ -74,7 +74,11 @@ interface IActivityTracker {
     function updateMemberActivity(address member) external;
 }
 
-contract NativeOpenworkDAO is 
+/// @title NativeOpenworkDAO
+/// @notice On-chain governance contract for the Openwork platform on Arbitrum
+/// @dev Implements OpenZeppelin Governor with stake-based and reward-based voting power.
+///      Users can vote based on staked tokens or earned tokens from platform participation.
+contract NativeOpenworkDAO is
     Initializable,
     GovernorUpgradeable,
     GovernorSettingsUpgradeable,
@@ -138,6 +142,10 @@ contract NativeOpenworkDAO is
         _disableInitializers();
     }
     
+    /// @notice Initialize the DAO contract
+    /// @param _owner Address of contract owner
+    /// @param _bridge Address of NativeLZOpenworkBridge contract
+    /// @param _genesis Address of OpenworkGenesis storage contract
     function initialize(address _owner, address _bridge, address _genesis) public initializer {
         __Governor_init("CrossChainNativeDAO");
         __GovernorSettings_init(
@@ -148,7 +156,7 @@ contract NativeOpenworkDAO is
         __GovernorCountingSimple_init();
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
-        
+
         bridge = INativeChainBridge(_bridge);
         genesis = IOpenworkGenesis(_genesis);
 
@@ -161,28 +169,38 @@ contract NativeOpenworkDAO is
         // Owner is default admin
         admins[_owner] = true;
     }
-    
+
+    /// @dev Authorize upgrade to new implementation (admin only)
     function _authorizeUpgrade(address /* newImplementation */) internal view override {
         require(admins[_msgSender()], "Admin");
     }
 
+    /// @notice Upgrade contract implementation (admin only)
+    /// @param newImplementation Address of new implementation
     function upgradeFromDAO(address newImplementation) external {
         require(admins[msg.sender], "Admin");
         upgradeToAndCall(newImplementation, "");
     }
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || _msgSender() == _executor(), "Unauthorized");
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
     }
 
+    /// @notice Add a contract to the authorized list
+    /// @param _contract Address of contract to authorize
     function addAuthorizedContract(address _contract) external {
         require(admins[msg.sender], "Admin");
         authorizedContracts[_contract] = true;
         emit AuthorizedContractAdded(_contract);
     }
 
+    /// @notice Remove a contract from the authorized list
+    /// @param _contract Address of contract to remove
     function removeAuthorizedContract(address _contract) external {
         require(admins[msg.sender], "Admin");
         authorizedContracts[_contract] = false;
@@ -191,13 +209,17 @@ contract NativeOpenworkDAO is
 
     // ==================== CONTRACT SETUP FUNCTIONS ====================
 
+    /// @notice Set the NOWJ contract for rewards and governance tracking
+    /// @param _nowjContract Address of NativeOpenWorkJobContract
     function setNOWJContract(address _nowjContract) external {
         require(admins[msg.sender], "Admin");
         address oldContract = address(nowjContract);
         nowjContract = INativeOpenWorkJobContract(_nowjContract);
         emit NOWJContractUpdated(oldContract, _nowjContract);
     }
-    
+
+    /// @notice Set the bridge contract for cross-chain messaging
+    /// @param _bridge Address of NativeLZOpenworkBridge
     function setBridge(address _bridge) external {
         require(admins[msg.sender], "Admin");
         address oldBridge = address(bridge);
@@ -205,6 +227,8 @@ contract NativeOpenworkDAO is
         emit BridgeUpdated(oldBridge, _bridge);
     }
 
+    /// @notice Set the genesis storage contract
+    /// @param _genesis Address of OpenworkGenesis contract
     function setGenesis(address _genesis) external {
         require(admins[msg.sender], "Admin");
         address oldGenesis = address(genesis);
@@ -212,20 +236,23 @@ contract NativeOpenworkDAO is
         emit GenesisUpdated(oldGenesis, _genesis);
     }
 
+    /// @notice Set the ActivityTracker contract
+    /// @param _activityTracker Address of ActivityTracker contract
     function setActivityTracker(address _activityTracker) external {
         require(admins[msg.sender], "Admin");
         activityTracker = IActivityTracker(_activityTracker);
     }
     
     // ==================== GOVERNANCE ELIGIBILITY CHECK FUNCTIONS ====================
-    
+
+    /// @dev Check if account has governance eligibility based on stake or rewards
     function _hasGovernanceEligibility(address account, uint256 stakeThreshold, uint256 rewardThreshold) internal view returns (bool) {
         // Check stake eligibility from Genesis
         IOpenworkGenesis.Stake memory stake = genesis.getStake(account);
         if (stake.isActive && stake.amount >= stakeThreshold) {
             return true;
         }
-        
+
         // Check earned + team tokens eligibility
         if (address(nowjContract) != address(0)) {
             uint256 earnedTokens = nowjContract.getUserEarnedTokens(account);
@@ -234,18 +261,30 @@ contract NativeOpenworkDAO is
                 return true;
             }
         }
-        
+
         return false;
     }
-    
+
+    /// @notice Check if account can create proposals
+    /// @param account Address to check
+    /// @return True if account meets proposal threshold
     function canPropose(address account) public view returns (bool) {
         return _hasGovernanceEligibility(account, proposalStakeThreshold, proposalRewardThreshold);
     }
-    
+
+    /// @notice Check if account can vote on proposals
+    /// @param account Address to check
+    /// @return True if account meets voting threshold
     function canVote(address account) public view returns (bool) {
         return _hasGovernanceEligibility(account, votingStakeThreshold, votingRewardThreshold);
     }
 
+    /// @notice Get user's governance power breakdown
+    /// @param account Address to query
+    /// @return stakeAmount Staked token amount
+    /// @return earnedTokens Earned + team tokens
+    /// @return canProposeFlag Whether user can propose
+    /// @return canVoteFlag Whether user can vote
     function getUserGovernancePower(address account) external view returns (
         uint256 stakeAmount,
         uint256 earnedTokens,
@@ -261,13 +300,19 @@ contract NativeOpenworkDAO is
             uint256 teamTokens = nowjContract.teamTokensAllocated(account);
             earnedTokens = earned + teamTokens;
         }
-        
+
         canProposeFlag = canPropose(account);
         canVoteFlag = canVote(account);
     }
 
     // ==================== DIRECT STAKE DATA UPDATE (for local use) ====================
-    
+
+    /// @notice Update stake data for a user (authorized contracts only)
+    /// @param staker Address of the staker
+    /// @param amount Stake amount
+    /// @param unlockTime Timestamp when stake unlocks
+    /// @param durationMinutes Stake duration in minutes
+    /// @param isActive Whether stake is currently active
     function updateStakeData(
         address staker,
         uint256 amount,
@@ -276,43 +321,49 @@ contract NativeOpenworkDAO is
         bool isActive
     ) external {
         require(authorizedContracts[msg.sender], "Auth");
-        
+
         // Store in Genesis
         genesis.setStake(staker, amount, unlockTime, durationMinutes, isActive);
-        
+
         emit StakeDataReceived(staker, amount, isActive);
     }
-    
+
     // ==================== EARNER MANAGEMENT ====================
-    
+
+    /// @notice Add or update an earner's data (governance only)
+    /// @param earnerAddress Address of the earner
+    /// @param balance Earner's token balance
+    /// @param governanceActions Total governance actions performed
     function addOrUpdateEarner(address earnerAddress, uint256 balance, uint256 governanceActions) external onlyGovernance {
         require(earnerAddress != address(0), "Invalid address");
-        
+
         // Store in Genesis
         genesis.setEarner(earnerAddress, balance, governanceActions);
-        
+
         emit EarnerUpdated(earnerAddress, balance, governanceActions);
     }
-    
+
     // ==================== DELEGATION FUNCTIONS ====================
-    
+
+    /// @notice Delegate voting power to another address
+    /// @param delegatee Address to delegate voting power to
     function delegate(address delegatee) external {
         address currentDelegate = genesis.getDelegate(msg.sender);
         require(delegatee != currentDelegate, "Already delegated");
-        
+
         IOpenworkGenesis.Stake memory userStake = genesis.getStake(msg.sender);
         require(userStake.isActive && userStake.amount > 0, "No stake");
-        
+
         uint256 delegatorPower = userStake.amount * userStake.durationMinutes;
-        
+
         if (currentDelegate != address(0)) {
             genesis.updateDelegatedVotingPower(currentDelegate, delegatorPower, false);
         }
-        
+
         if (delegatee != address(0)) {
             genesis.updateDelegatedVotingPower(delegatee, delegatorPower, true);
         }
-        
+
         genesis.setDelegate(msg.sender, delegatee);
         emit DelegateChanged(msg.sender, currentDelegate, delegatee);
     }
@@ -328,24 +379,41 @@ contract NativeOpenworkDAO is
     }
 
     // ==================== VIEW FUNCTIONS ====================
-    
+
+    /// @notice Get all staker addresses
+    /// @return Array of staker addresses
     function getAllStakers() external view returns (address[] memory) {
         return genesis.getAllStakers();
     }
 
+    /// @notice Get stake info for a staker
+    /// @param staker Address to query
+    /// @return amount Stake amount
+    /// @return unlockTime Unlock timestamp
+    /// @return durationMinutes Stake duration
+    /// @return isActive Whether stake is active
     function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) {
         return genesis.getStakerInfo(staker);
     }
-    
+
+    /// @notice Get earner information
+    /// @param earnerAddress Address to query
+    /// @return Earner address, balance, and governance actions
     function getEarner(address earnerAddress) external view returns (address, uint256, uint256) {
         return genesis.getEarnerInfo(earnerAddress);
     }
-    
+
+    /// @notice Get complete voting power breakdown for an account
+    /// @param account Address to query
+    /// @return own Voting power from own stake
+    /// @return delegated Voting power from delegations
+    /// @return reward Voting power from earned tokens
+    /// @return total Total voting power
     function getVotingPower(address account) external view returns (uint256 own, uint256 delegated, uint256 reward, uint256 total) {
         IOpenworkGenesis.Stake memory userStake = genesis.getStake(account);
         own = (userStake.isActive && userStake.amount > 0) ? userStake.amount * userStake.durationMinutes : 0;
         delegated = genesis.getDelegatedVotingPower(account);
-        
+
         // Add reward-based voting power (earned + team tokens)
         reward = 0;
         if (address(nowjContract) != address(0)) {
@@ -353,10 +421,15 @@ contract NativeOpenworkDAO is
             uint256 teamTokens = nowjContract.teamTokensAllocated(account);
             reward = earnedTokens + teamTokens;
         }
-        
+
         total = own + delegated + reward;
     }
 
+    /// @notice Get all governance thresholds
+    /// @return proposalStakeThreshold_ Stake required to propose
+    /// @return votingStakeThreshold_ Stake required to vote
+    /// @return proposalRewardThreshold_ Earned tokens required to propose
+    /// @return votingRewardThreshold_ Earned tokens required to vote
     function getGovernanceThresholds() external view returns (uint256 proposalStakeThreshold_, uint256 votingStakeThreshold_, uint256 proposalRewardThreshold_, uint256 votingRewardThreshold_) {
         return (proposalStakeThreshold, votingStakeThreshold, proposalRewardThreshold, votingRewardThreshold);
     }
@@ -522,6 +595,7 @@ contract NativeOpenworkDAO is
     
     // ==================== EMERGENCY FUNCTIONS ====================
 
+    /// @notice Emergency withdraw ETH from contract (admin only)
     function withdraw() external {
         require(admins[msg.sender], "Admin");
         uint256 balance = address(this).balance;
@@ -529,7 +603,7 @@ contract NativeOpenworkDAO is
         (bool success, ) = payable(msg.sender).call{value: balance}("");
         require(success, "Failed");
     }
-    
-    // Allow contract to receive ETH for paying LayerZero fees
+
+    /// @notice Receive ETH for paying LayerZero fees
     receive() external payable override {}
 }

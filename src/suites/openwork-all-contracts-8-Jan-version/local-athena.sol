@@ -55,6 +55,10 @@ interface ICCTPSender {
     function sendFast(uint256 amount, uint32 domain, bytes32 mintRecipient, uint256 nonce) external;
 }
 
+/// @title LocalAthena
+/// @notice Oracle client for dispute resolution on Local chains (OP Sepolia)
+/// @dev Handles dispute raising, skill verification, and fee routing to Native chain
+///      Uses CCTP for USDC transfers and LayerZero for message passing
 contract LocalAthena is 
     Initializable,
     ReentrancyGuardUpgradeable,
@@ -150,30 +154,41 @@ contract LocalAthena is
         require(owner() == _msgSender() || address(bridge) == _msgSender(), "Unauthorized upgrade");
     }
 
+    /// @notice Upgrade contract implementation via DAO governance
+    /// @param newImplementation Address of new implementation contract
     function upgradeFromDAO(address newImplementation) external {
         require(msg.sender == address(bridge), "Only bridge can upgrade");
         upgradeToAndCall(newImplementation, "");
     }
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external onlyOwner {
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
     }
 
     // ==================== CCTP CONFIGURATION ====================
-    
+
+    /// @notice Set the CCTP sender contract address
+    /// @param _cctpSender Address of the CCTPTransceiver contract
     function setCCTPSender(address _cctpSender) external onlyOwner {
         require(_cctpSender != address(0), "CCTP sender cannot be zero address");
         cctpSender = _cctpSender;
         emit CCTPSenderSet(_cctpSender);
     }
     
+    /// @notice Set the recipient address for fees on Native chain
+    /// @param _recipient Address of NativeAthena on Arbitrum
     function setNativeAthenaRecipient(address _recipient) external onlyOwner {
         require(_recipient != address(0), "Recipient cannot be zero address");
         nativeAthenaRecipient = _recipient;
         emit NativeAthenaRecipientSet(_recipient);
     }
-    
+
+    /// @notice Set the CCTP domain ID for Native chain
+    /// @param _domain CCTP domain ID (3 for Arbitrum)
     function setNativeChainDomain(uint32 _domain) external onlyOwner {
         nativeChainDomain = _domain;
         emit NativeChainDomainSet(_domain);
@@ -198,7 +213,16 @@ contract LocalAthena is
     }
     
     // ==================== MESSAGE HANDLERS ====================
-    
+
+    /// @notice Handle dispute finalization from Native Athena via bridge
+    /// @param disputeId Unique dispute identifier
+    /// @param winningSide True if job giver wins, false if worker wins
+    /// @param votesFor Total voting power for job giver
+    /// @param votesAgainst Total voting power against job giver
+    /// @param voters Array of voter addresses
+    /// @param claimAddresses Array of claim addresses for rewards
+    /// @param votingPowers Array of voting powers per voter
+    /// @param voteDirections Array of vote directions (true = for, false = against)
     function handleFinalizeDisputeWithVotes(
         string memory disputeId, 
         bool winningSide, 
@@ -263,26 +287,39 @@ contract LocalAthena is
     }
     
     // ==================== ADMIN FUNCTIONS ====================
-    
+
+    /// @notice Set the bridge contract address
+    /// @param _bridge Address of the LocalLZOpenworkBridge contract
     function setBridge(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Bridge address cannot be zero");
         bridge = ILayerZeroBridge(_bridge);
         emit BridgeSet(_bridge);
     }
     
+    /// @notice Set the local job contract address
+    /// @param _jobContract Address of the LocalOpenWorkJobContract
     function setJobContract(address _jobContract) external onlyOwner {
         require(_jobContract != address(0), "Job contract address cannot be zero");
         jobContract = ILocalOpenWorkJobContract(_jobContract);
         emit JobContractSet(_jobContract);
     }
-    
+
+    /// @notice Set the minimum fee required to raise a dispute
+    /// @param _minFee Minimum fee in USDC (6 decimals)
     function setMinDisputeFee(uint256 _minFee) external onlyOwner {
         minDisputeFee = _minFee;
         emit MinDisputeFeeSet(_minFee);
     }
     
     // ==================== MAIN FUNCTIONS ====================
-    
+
+    /// @notice Raise a dispute for a job
+    /// @param _jobId Job identifier
+    /// @param _disputeHash IPFS hash of dispute details
+    /// @param _oracleName Target oracle for dispute resolution
+    /// @param _feeAmount USDC fee amount for dispute
+    /// @param _disputedAmount Amount in dispute
+    /// @param _nativeOptions LayerZero options for cross-chain message
     function raiseDispute(
         string memory _jobId,
         string memory _disputeHash,
@@ -322,6 +359,11 @@ contract LocalAthena is
         emit DisputeRaised(msg.sender, _jobId, _feeAmount);
     }
     
+    /// @notice Submit skill verification request to Native Athena
+    /// @param _applicationHash IPFS hash of application/skill details
+    /// @param _feeAmount USDC fee amount for verification
+    /// @param _targetOracleName Target oracle for verification
+    /// @param _nativeOptions LayerZero options for cross-chain message
     function submitSkillVerification(
         string memory _applicationHash,
         uint256 _feeAmount,
@@ -346,6 +388,12 @@ contract LocalAthena is
         emit SkillVerificationSubmitted(msg.sender, _targetOracleName, _feeAmount);
     }
     
+    /// @notice Ask Athena oracle a general question
+    /// @param _description Question description
+    /// @param _hash IPFS hash of full question details
+    /// @param _targetOracle Target oracle to answer
+    /// @param _feeAmount USDC fee amount for the query
+    /// @param _nativeOptions LayerZero options for cross-chain message
     function askAthena(
         string memory _description,
         string memory _hash,
@@ -375,8 +423,11 @@ contract LocalAthena is
     }
     
     // ==================== VIEW FUNCTIONS ====================
-    
-    // View function to get claimable amount for an address
+
+    /// @notice Get claimable amount for an address from a dispute
+    /// @param disputeId Dispute identifier
+    /// @param claimAddress Address to check
+    /// @return Claimable amount (0 if already claimed)
     function getClaimableAmount(string memory disputeId, address claimAddress) external view returns (uint256) {
         if (hasClaimed[disputeId][claimAddress]) {
             return 0;
@@ -384,7 +435,14 @@ contract LocalAthena is
         return claimableAmount[disputeId][claimAddress];
     }
     
-    // View function to get dispute info
+    /// @notice Get detailed dispute information
+    /// @param disputeId Dispute identifier
+    /// @return totalFees Total fees collected for dispute
+    /// @return totalVotingPowerFor Voting power supporting job giver
+    /// @return totalVotingPowerAgainst Voting power against job giver
+    /// @return winningSide True if job giver won
+    /// @return isFinalized Whether dispute is finalized
+    /// @return voteCount Number of votes cast
     function getDisputeInfo(string memory disputeId) external view returns (
         uint256 totalFees,
         uint256 totalVotingPowerFor,
@@ -404,7 +462,10 @@ contract LocalAthena is
         );
     }
     
-    // Function to check if job exists and caller is involved
+    /// @notice Check if caller is involved in a job (as job giver or applicant)
+    /// @param _jobId Job identifier
+    /// @param _caller Address to check
+    /// @return True if caller is involved in the job
     function isCallerInvolvedInJob(string memory _jobId, address _caller) external view returns (bool) {
         require(address(jobContract) != address(0), "Job contract not set");
         
@@ -428,7 +489,10 @@ contract LocalAthena is
         return false;
     }
     
-    // Quote function
+    /// @notice Get fee quote for sending a message to Native chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteSingleChain(
         string calldata /* _functionName */,
         bytes calldata _payload,
@@ -437,7 +501,8 @@ contract LocalAthena is
         return bridge.quoteNativeChain(_payload, _options);
     }
     
-    // View functions
+    /// @notice Get the USDC balance held by this contract
+    /// @return USDC balance
     function getContractBalance() external view returns (uint256) {
         return usdcToken.balanceOf(address(this));
     }
@@ -469,6 +534,7 @@ contract LocalAthena is
     
     // ==================== ADMIN WITHDRAWAL FUNCTIONS ====================
 
+    /// @notice Withdraw accumulated ETH from the contract
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");

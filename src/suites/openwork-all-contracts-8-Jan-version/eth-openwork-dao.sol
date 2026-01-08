@@ -40,6 +40,10 @@ interface IUpgradeable {
     function upgradeFromDAO(address newImplementation) external;
 }
 
+/// @title ETHOpenworkDAO
+/// @notice Governor contract for Openwork DAO governance on ETH Sepolia
+/// @dev Implements staking, delegation, and cross-chain voting power sync
+///      Compatible with OpenZeppelin Governor and Tally
 contract ETHOpenworkDAO is 
     Initializable,
     GovernorUpgradeable,
@@ -136,7 +140,11 @@ contract ETHOpenworkDAO is
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
     
     // ==================== MESSAGE HANDLERS ====================
-    
+
+    /// @notice Handle voting power sync from Native chain via bridge
+    /// @param user Address of the user
+    /// @param totalRewards Total rewards determining voting power
+    /// @param sourceChain LayerZero endpoint ID of source chain
     function handleSyncVotingPower(address user, uint256 totalRewards, uint32 sourceChain) external {
         require(msg.sender == address(bridge), "Only bridge can call this function");
         userTotalRewards[user] = totalRewards;
@@ -144,7 +152,9 @@ contract ETHOpenworkDAO is
     }
     
     // ==================== ADMIN FUNCTIONS ====================
-    
+
+    /// @notice Set the bridge contract address
+    /// @param _bridge Address of the ETHLZOpenworkBridge contract
     function setBridge(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Invalid bridge address");
         bridge = IETHLZOpenworkBridge(_bridge);
@@ -223,7 +233,10 @@ contract ETHOpenworkDAO is
     }
     
     // ==================== GOVERNANCE POWER CALCULATION ====================
-    
+
+    /// @notice Get combined governance power from stake and rewards
+    /// @param account Address to query
+    /// @return Combined governance power
     function getCombinedGovernancePower(address account) public view returns (uint256) {
         uint256 stakePower = stakes[account].amount;
         uint256 rewardPower = userTotalRewards[account];
@@ -231,9 +244,13 @@ contract ETHOpenworkDAO is
     }
 
     // ==================== STAKING FUNCTIONS ====================
-    
+
+    /// @notice Stake tokens for governance participation
+    /// @param amount Amount of tokens to stake (min 100 tokens)
+    /// @param durationMinutes Lock duration in minutes (1-3)
+    /// @param _options LayerZero options for cross-chain sync
     function stake(
-        uint256 amount, 
+        uint256 amount,
         uint256 durationMinutes,
         bytes calldata _options
     ) external payable nonReentrant {
@@ -260,6 +277,8 @@ contract ETHOpenworkDAO is
         _sendStakeDataCrossChain(msg.sender, true, _options);
     }
     
+    /// @notice Unstake tokens (requires two-step process with delay)
+    /// @param _options LayerZero options for cross-chain sync
     function unstake(bytes calldata _options) external payable nonReentrant {
         Stake memory userStake = stakes[msg.sender];
         require(userStake.amount > 0, "No stake found");
@@ -289,8 +308,12 @@ contract ETHOpenworkDAO is
         }
     }
     
+    /// @notice Remove stake from an address (governance only - for slashing)
+    /// @param staker Address to remove stake from
+    /// @param removeAmount Amount to remove
+    /// @param _options LayerZero options for cross-chain sync
     function removeStake(
-        address staker, 
+        address staker,
         uint256 removeAmount,
         bytes calldata _options
     ) external payable onlyGovernance nonReentrant {
@@ -312,7 +335,9 @@ contract ETHOpenworkDAO is
     }
     
     // ==================== DELEGATION FUNCTIONS ====================
-    
+
+    /// @notice Delegate voting power to another address
+    /// @param delegatee Address to delegate to (zero to revoke)
     function delegate(address delegatee) external {
         address currentDelegate = delegates[msg.sender];
         require(delegatee != currentDelegate, "Already delegated to this address");
@@ -343,21 +368,38 @@ contract ETHOpenworkDAO is
     }
 
     // ==================== VIEW FUNCTIONS ====================
-    
+
+    /// @notice Get all addresses that have staked
+    /// @return Array of staker addresses
     function getAllStakers() external view returns (address[] memory) {
         return allStakers;
     }
 
+    /// @notice Get detailed staker information
+    /// @param staker Address to query
+    /// @return amount Staked amount
+    /// @return unlockTime Timestamp when stake unlocks
+    /// @return durationMinutes Lock duration in minutes
+    /// @return hasStake Whether address has an active stake
     function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool hasStake) {
         Stake memory userStake = stakes[staker];
         return (userStake.amount, userStake.unlockTime, userStake.durationMinutes, userStake.amount > 0);
     }
     
+    /// @notice Get when unstake becomes available after request
+    /// @param staker Address to query
+    /// @return Timestamp when unstake available (0 if not requested)
     function getUnstakeAvailableTime(address staker) external view returns (uint256) {
         if (unstakeRequestTime[staker] == 0) return 0;
         return unstakeRequestTime[staker] + unstakeDelay;
     }
     
+    /// @notice Get detailed voting power breakdown
+    /// @param account Address to query
+    /// @return own Own staking power
+    /// @return delegated Power delegated to this address
+    /// @return reward Power from rewards
+    /// @return total Total voting power
     function getVotingPower(address account) external view returns (uint256 own, uint256 delegated, uint256 reward, uint256 total) {
         Stake memory userStake = stakes[account];
         own = userStake.amount > 0 ? userStake.amount * userStake.durationMinutes : 0;
@@ -366,6 +408,14 @@ contract ETHOpenworkDAO is
         total = own + delegated + reward;
     }
     
+    /// @notice Check governance eligibility for an account
+    /// @param account Address to check
+    /// @return canPropose Whether account can create proposals
+    /// @return canVote Whether account can vote
+    /// @return stakeAmount Current stake amount
+    /// @return rewardTokens Reward tokens from Native chain
+    /// @return combinedPower Combined governance power
+    /// @return votingPower Actual voting power
     function getGovernanceEligibility(address account) external view returns (bool canPropose, bool canVote, uint256 stakeAmount, uint256 rewardTokens, uint256 combinedPower, uint256 votingPower) {
         stakeAmount = stakes[account].amount;
         rewardTokens = userTotalRewards[account];
@@ -470,6 +520,9 @@ contract ETHOpenworkDAO is
         return super.votingPeriod();
     }
     
+    /// @notice Get all currently active proposals
+    /// @return activeIds Array of active proposal IDs
+    /// @return states Array of proposal states
     function getActiveProposalIds() external view returns (uint256[] memory activeIds, ProposalState[] memory states) {
         uint256 activeCount = 0;
         
@@ -493,6 +546,9 @@ contract ETHOpenworkDAO is
         }
     }
     
+    /// @notice Get all proposals with their states
+    /// @return ids Array of all proposal IDs
+    /// @return states Array of proposal states
     function getAllProposalIds() external view returns (uint256[] memory ids, ProposalState[] memory states) {
         ids = new uint256[](proposalIds.length);
         states = new ProposalState[](proposalIds.length);
@@ -503,12 +559,19 @@ contract ETHOpenworkDAO is
         }
     }
     
+    /// @notice Get total number of proposals created
+    /// @return Number of proposals
     function getProposalCount() external view returns (uint256) {
         return proposalIds.length;
     }
     
     // ==================== QUOTE FUNCTIONS ====================
-    
+
+    /// @notice Get fee quote for stake update cross-chain message
+    /// @param staker Address of the staker
+    /// @param isActive Whether stake is active
+    /// @param _options LayerZero options
+    /// @return fee Native token fee required
     function quoteStakeUpdate(
         address staker,
         bool isActive,
@@ -528,6 +591,10 @@ contract ETHOpenworkDAO is
         return bridge.quoteNativeChain(payload, _options);
     }
     
+    /// @notice Get fee quote for governance notification cross-chain message
+    /// @param account Address performing governance action
+    /// @param _options LayerZero options
+    /// @return fee Native token fee required
     function quoteGovernanceNotification(
         address account,
         bytes calldata _options
@@ -539,23 +606,32 @@ contract ETHOpenworkDAO is
     }
     
     // ==================== GOVERNANCE ADMIN FUNCTIONS ====================
-    
+
+    /// @notice Update the proposal threshold (governance only)
+    /// @param newThreshold New threshold amount
     function updateProposalThreshold(uint256 newThreshold) external onlyGovernance {
         proposalThresholdAmount = newThreshold;
         emit ThresholdUpdated("proposalThreshold", newThreshold);
     }
     
+    /// @notice Update the voting threshold (governance only)
+    /// @param newThreshold New threshold amount
     function updateVotingThreshold(uint256 newThreshold) external onlyGovernance {
         votingThresholdAmount = newThreshold;
         emit ThresholdUpdated("votingThreshold", newThreshold);
     }
-    
+
+    /// @notice Update the unstake delay period (governance only)
+    /// @param newDelay New delay in seconds
     function updateUnstakeDelay(uint256 newDelay) external onlyGovernance {
         unstakeDelay = newDelay;
     }
     
     // ==================== ADMIN MANAGEMENT ====================
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || _msgSender() == _executor(), "Only owner or governance");
         admins[_admin] = _status;
@@ -564,6 +640,7 @@ contract ETHOpenworkDAO is
 
     // ==================== EMERGENCY FUNCTIONS ====================
 
+    /// @notice Withdraw accumulated ETH from the contract
     function withdraw() external {
         require(admins[msg.sender], "Only admin");
         uint256 balance = address(this).balance;
@@ -572,6 +649,11 @@ contract ETHOpenworkDAO is
         require(success, "Transfer failed");
     }
 
+    /// @notice Upgrade a contract on this or another chain
+    /// @param targetChainId Chain ID where contract is deployed
+    /// @param targetProxy Proxy contract address to upgrade
+    /// @param newImplementation New implementation address
+    /// @param _options LayerZero options for cross-chain
     function upgradeContract(
         uint32 targetChainId,
         address targetProxy,
@@ -591,6 +673,8 @@ contract ETHOpenworkDAO is
         }
     }
 
+    /// @notice Emergency withdraw tokens from the contract
+    /// @param amount Amount of tokens to withdraw
     function emergencyWithdrawTokens(uint256 amount) external {
         require(admins[msg.sender], "Only admin");
         require(openworkToken.transfer(msg.sender, amount), "Token transfer failed");

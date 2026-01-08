@@ -135,6 +135,10 @@ contract NativeRewardsContract is
         _disableInitializers();
     }
 
+    /// @notice Initialize the rewards contract
+    /// @param _owner Address of contract owner
+    /// @param _jobContract Address of NativeOpenWorkJobContract
+    /// @param _genesis Address of OpenworkGenesis storage contract
     function initialize(
         address _owner,
         address _jobContract,
@@ -153,16 +157,22 @@ contract NativeRewardsContract is
 
     // ==================== ADMIN FUNCTIONS ====================
 
+    /// @notice Set the job contract address
+    /// @param _jobContract Address of NativeOpenWorkJobContract
     function setJobContract(address _jobContract) external onlyOwner {
         address oldContract = jobContract;
         jobContract = _jobContract;
         emit JobContractUpdated(oldContract, _jobContract);
     }
 
+    /// @notice Set the genesis storage contract address
+    /// @param _genesis Address of OpenworkGenesis contract
     function setGenesis(address _genesis) external onlyOwner {
         genesis = IOpenworkGenesis(_genesis);
     }
 
+    /// @notice Set the profile genesis contract address for referrer data
+    /// @param _profileGenesis Address of ProfileGenesis contract
     function setProfileGenesis(address _profileGenesis) external onlyOwner {
         profileGenesis = IProfileGenesis(_profileGenesis);
     }
@@ -178,6 +188,9 @@ contract NativeRewardsContract is
         emit NativeDAOUpdated(oldDAO, _nativeDAO);
     }
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || msg.sender == nativeDAO, "Auth");
         admins[_admin] = _status;
@@ -672,6 +685,10 @@ contract NativeRewardsContract is
 
     // ==================== TOKEN CALCULATION FUNCTIONS ====================
 
+    /// @notice Calculate tokens earned for a payment range across bands
+    /// @param fromAmount Starting platform total (USDC 6 decimals)
+    /// @param toAmount Ending platform total (USDC 6 decimals)
+    /// @return Total tokens to award
     function calculateTokensForRange(uint256 fromAmount, uint256 toAmount) public view returns (uint256) {
         if (fromAmount >= toAmount) {
             return 0;
@@ -705,48 +722,82 @@ contract NativeRewardsContract is
 
     // ==================== VIEW FUNCTIONS ====================
 
+    /// @notice Get all band rewards for a user
+    /// @param user Address to query
+    /// @return Array of UserBandRewards structs
     function getUserBandRewards(address user) external view returns (UserBandRewards[] memory) {
         return userBandRewards[user];
     }
 
+    /// @notice Get user's rewards in a specific band
+    /// @param user Address to query
+    /// @param band Band number
+    /// @return UserBandRewards struct for the band
     function getUserRewardsInBand(address user, uint256 band) external view returns (UserBandRewards memory) {
         require(userHasBandRewards[user][band], "No rewards in this band");
         uint256 bandIndex = userBandIndex[user][band];
         return userBandRewards[user][bandIndex];
     }
 
+    /// @dev Get user's total tokens in a specific band
     function _getUserTokensInBand(address user, uint256 band) internal view returns (uint256) {
         if (!userHasBandRewards[user][band]) return 0;
         uint256 bandIndex = userBandIndex[user][band];
         return userBandRewards[user][bandIndex].tokensEarned;
     }
 
+    /// @notice Get user's total earned tokens across all bands
+    /// @param user Address to query
+    /// @return Total tokens earned
     function getUserTotalTokensEarned(address user) external view returns (uint256) {
         return userTotalTokensEarned[user];
     }
 
+    /// @notice Get user's total claimed tokens
+    /// @param user Address to query
+    /// @return Total tokens claimed
     function getUserTotalTokensClaimed(address user) external view returns (uint256) {
         return userTotalTokensClaimed[user];
     }
 
+    /// @notice Get user's governance actions in a specific band
+    /// @param user Address to query
+    /// @param band Band number
+    /// @return Number of governance actions in the band
     function getUserGovernanceActionsInBand(address user, uint256 band) external view returns (uint256) {
         return userGovernanceActionsByBand[user][band];
     }
 
+    /// @notice Get user's total governance actions across all bands
+    /// @param user Address to query
+    /// @return Total governance actions
     function getUserTotalGovernanceActions(address user) external view returns (uint256) {
         return userTotalGovernanceActions[user];
     }
 
+    /// @notice Get the number of reward bands
+    /// @return Number of bands
     function getRewardBandsCount() external view returns (uint256) {
         return rewardBands.length;
     }
 
+    /// @notice Get reward band details by index
+    /// @param index Band index
+    /// @return minAmount Minimum platform total for this band
+    /// @return maxAmount Maximum platform total for this band
+    /// @return owPerDollar Tokens awarded per USDC
     function getRewardBand(uint256 index) external view returns (uint256 minAmount, uint256 maxAmount, uint256 owPerDollar) {
         require(index < rewardBands.length, "Invalid band index");
         RewardBand memory band = rewardBands[index];
         return (band.minAmount, band.maxAmount, band.owPerDollar);
     }
 
+    /// @notice Get current platform band information
+    /// @return currentBand Current band index
+    /// @return currentTotal Total platform payments
+    /// @return bandMinAmount Minimum for current band
+    /// @return bandMaxAmount Maximum for current band
+    /// @return governanceRewardRate Tokens per USDC for current band
     function getPlatformBandInfo() external view returns (
         uint256 currentBand,
         uint256 currentTotal,

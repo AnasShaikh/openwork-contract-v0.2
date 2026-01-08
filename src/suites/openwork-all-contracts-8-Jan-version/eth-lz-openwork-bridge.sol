@@ -15,6 +15,10 @@ interface IETHOpenworkDAO {
     function handleSyncVotingPower(address user, uint256 totalRewards, uint32 sourceChain) external;
 }
 
+/// @title ETHLZOpenworkBridge
+/// @notice LayerZero bridge on ETH Sepolia for cross-chain communication with Native chain
+/// @dev Handles outgoing messages to Native chain and incoming reward/voting sync messages
+///      Uses LayerZero V2 OApp pattern for omnichain messaging
 contract ETHLZOpenworkBridge is OAppSender, OAppReceiver {
     
     // Authorized contracts that can use the bridge
@@ -74,8 +78,13 @@ contract ETHLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== UPGRADE FUNCTIONALITY ====================
-    
-function sendUpgradeCommand(
+
+    /// @notice Sends upgrade command to a contract on another chain via LayerZero
+    /// @param _dstChainId LayerZero endpoint ID of the destination chain
+    /// @param targetProxy Address of the proxy contract to upgrade on destination
+    /// @param newImplementation Address of the new implementation contract
+    /// @param _options LayerZero messaging options (gas limits, etc)
+    function sendUpgradeCommand(
     uint32 _dstChainId,
     address targetProxy,
     address newImplementation,
@@ -97,6 +106,11 @@ function sendUpgradeCommand(
 }
 
     
+    /// @notice Get fee quote for sending an upgrade command
+    /// @param targetChainId LayerZero endpoint ID of target chain
+    /// @param targetProxy Proxy contract to upgrade
+    /// @param newImplementation New implementation address
+    /// @return fee Native token fee required for the message
     function quoteUpgradeCommand(
         uint32 targetChainId,
         address targetProxy,
@@ -143,7 +157,11 @@ function sendUpgradeCommand(
     }
     
     // ==================== BRIDGE FUNCTIONS ====================
-    
+
+    /// @notice Send a message to the Native chain (Arbitrum)
+    /// @param _functionName Name of the function to call on destination
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
@@ -160,6 +178,11 @@ function sendUpgradeCommand(
         emit CrossChainMessageSent(_functionName, nativeChainEid, _payload);
     }
     
+    /// @notice Send a message to a specific chain by endpoint ID
+    /// @param _functionName Name of the function to call on destination
+    /// @param _dstEid LayerZero endpoint ID of destination chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToSpecificChain(
         string memory _functionName,
         uint32 _dstEid,
@@ -177,6 +200,14 @@ function sendUpgradeCommand(
         emit CrossChainMessageSent(_functionName, _dstEid, _payload);
     }
     
+    /// @notice Send messages to two chains in a single transaction
+    /// @param _functionName Name of the function to call on destinations
+    /// @param _dstEid1 LayerZero endpoint ID of first destination chain
+    /// @param _dstEid2 LayerZero endpoint ID of second destination chain
+    /// @param _payload1 ABI-encoded message data for first chain
+    /// @param _payload2 ABI-encoded message data for second chain
+    /// @param _options1 LayerZero messaging options for first chain
+    /// @param _options2 LayerZero messaging options for second chain
     function sendToTwoChains(
         string memory _functionName,
         uint32 _dstEid1,
@@ -215,6 +246,17 @@ function sendUpgradeCommand(
         emit CrossChainMessageSent(_functionName, _dstEid2, _payload2);
     }
     
+    /// @notice Send messages to three chains in a single transaction
+    /// @param _functionName Name of the function to call on destinations
+    /// @param _dstEid1 LayerZero endpoint ID of first destination chain
+    /// @param _dstEid2 LayerZero endpoint ID of second destination chain
+    /// @param _dstEid3 LayerZero endpoint ID of third destination chain
+    /// @param _payload1 ABI-encoded message data for first chain
+    /// @param _payload2 ABI-encoded message data for second chain
+    /// @param _payload3 ABI-encoded message data for third chain
+    /// @param _options1 LayerZero messaging options for first chain
+    /// @param _options2 LayerZero messaging options for second chain
+    /// @param _options3 LayerZero messaging options for third chain
     function sendToThreeChains(
         string memory _functionName,
         uint32 _dstEid1,
@@ -246,7 +288,11 @@ function sendUpgradeCommand(
     }
     
     // ==================== QUOTE FUNCTIONS ====================
-    
+
+    /// @notice Get fee quote for sending a message to Native chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteNativeChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -255,6 +301,11 @@ function sendUpgradeCommand(
         return msgFee.nativeFee;
     }
     
+    /// @notice Get fee quote for sending a message to a specific chain
+    /// @param _dstEid LayerZero endpoint ID of destination chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteSpecificChain(
         uint32 _dstEid,
         bytes calldata _payload,
@@ -264,6 +315,16 @@ function sendUpgradeCommand(
         return msgFee.nativeFee;
     }
     
+    /// @notice Get fee quote for sending messages to two chains
+    /// @param _dstEid1 LayerZero endpoint ID of first destination chain
+    /// @param _dstEid2 LayerZero endpoint ID of second destination chain
+    /// @param _payload1 ABI-encoded message data for first chain
+    /// @param _payload2 ABI-encoded message data for second chain
+    /// @param _options1 LayerZero messaging options for first chain
+    /// @param _options2 LayerZero messaging options for second chain
+    /// @return totalFee Combined fee for both messages
+    /// @return fee1 Fee for first chain message
+    /// @return fee2 Fee for second chain message
     function quoteTwoChains(
         uint32 _dstEid1,
         uint32 _dstEid2,
@@ -280,6 +341,20 @@ function sendUpgradeCommand(
         totalFee = fee1 + fee2;
     }
     
+    /// @notice Get fee quote for sending messages to three chains
+    /// @param _dstEid1 LayerZero endpoint ID of first destination chain
+    /// @param _dstEid2 LayerZero endpoint ID of second destination chain
+    /// @param _dstEid3 LayerZero endpoint ID of third destination chain
+    /// @param _payload1 ABI-encoded message data for first chain
+    /// @param _payload2 ABI-encoded message data for second chain
+    /// @param _payload3 ABI-encoded message data for third chain
+    /// @param _options1 LayerZero messaging options for first chain
+    /// @param _options2 LayerZero messaging options for second chain
+    /// @param _options3 LayerZero messaging options for third chain
+    /// @return totalFee Combined fee for all messages
+    /// @return fee1 Fee for first chain message
+    /// @return fee2 Fee for second chain message
+    /// @return fee3 Fee for third chain message
     function quoteThreeChains(
         uint32 _dstEid1,
         uint32 _dstEid2,
@@ -303,38 +378,55 @@ function sendUpgradeCommand(
     
     // ==================== ADMIN FUNCTIONS ====================
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || msg.sender == mainDaoContract, "Auth");
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
     }
 
+    /// @notice Authorize a contract to use this bridge for sending messages
+    /// @param _contract Contract address to authorize
+    /// @param _authorized True to authorize, false to revoke
     function authorizeContract(address _contract, bool _authorized) external onlyOwner {
         authorizedContracts[_contract] = _authorized;
         emit ContractAuthorized(_contract, _authorized);
     }
 
+    /// @notice Allow or disallow a source chain for incoming messages
+    /// @param _eid LayerZero endpoint ID of the source chain
+    /// @param _allowed True to allow, false to block
     function setAllowedSourceChain(uint32 _eid, bool _allowed) external onlyOwner {
         allowedSourceChains[_eid] = _allowed;
         emit SourceChainAllowed(_eid, _allowed);
     }
     
+    /// @notice Set the Main DAO contract address for routing messages
+    /// @param _mainDao Address of the ETHOpenworkDAO contract
     function setMainDaoContract(address _mainDao) external onlyOwner {
         require(_mainDao != address(0), "Invalid main DAO address");
         mainDaoContract = _mainDao;
         emit ContractAddressSet("mainDao", _mainDao);
     }
     
+    /// @notice Set the Rewards contract address for routing messages
+    /// @param _rewards Address of the ETHRewardsContract
     function setRewardsContract(address _rewards) external onlyOwner {
         rewardsContract = _rewards;
         emit ContractAddressSet("rewards", _rewards);
     }
     
+    /// @notice Update the Native chain endpoint ID
+    /// @param _nativeChainEid New LayerZero endpoint ID for Native chain
     function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
         nativeChainEid = _nativeChainEid;
         emit ChainEndpointUpdated("native", _nativeChainEid);
     }
-    
+
+    /// @notice Withdraw accumulated ETH from the contract
+    /// @dev Used to recover ETH sent for LayerZero fees
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");

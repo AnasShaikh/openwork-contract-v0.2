@@ -76,6 +76,10 @@ interface IUpgradeable {
     function upgradeFromDAO(address newImplementation) external;
 }
 
+/// @title NativeLZOpenworkBridge
+/// @notice LayerZero bridge on Native chain (Arbitrum) for cross-chain communication
+/// @dev Central hub for all cross-chain messages - routes to NOWJC, NativeAthena, ProfileManager, and NativeDAO
+///      Uses LayerZero V2 OApp pattern for omnichain messaging
 contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     
     // Authorized contracts that can use the bridge
@@ -143,7 +147,9 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== LOCAL CHAIN MANAGEMENT ====================
-    
+
+    /// @notice Add a new local chain to the authorized list
+    /// @param _localChainEid LayerZero endpoint ID of the local chain to add
     function addLocalChain(uint32 _localChainEid) external onlyOwner {
         require(!authorizedLocalChains[_localChainEid], "Local chain already authorized");
         authorizedLocalChains[_localChainEid] = true;
@@ -151,6 +157,8 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         emit LocalChainAdded(_localChainEid);
     }
     
+    /// @notice Remove a local chain from the authorized list
+    /// @param _localChainEid LayerZero endpoint ID of the local chain to remove
     function removeLocalChain(uint32 _localChainEid) external onlyOwner {
         require(authorizedLocalChains[_localChainEid], "Local chain not authorized");
         authorizedLocalChains[_localChainEid] = false;
@@ -166,6 +174,8 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         emit LocalChainRemoved(_localChainEid);
     }
     
+    /// @notice Get all authorized local chain endpoint IDs
+    /// @return Array of authorized local chain endpoint IDs
     function getLocalChains() external view returns (uint32[] memory) {
         return localChainEids;
     }
@@ -197,7 +207,10 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== UPGRADE FUNCTIONALITY ====================
-    
+
+    /// @notice Execute contract upgrade on Native chain
+    /// @param targetProxy Address of the proxy contract to upgrade
+    /// @param newImplementation Address of the new implementation contract
     function handleUpgradeContract(address targetProxy, address newImplementation) external {
         require(admins[msg.sender], "Only admin");
         require(targetProxy != address(0), "Invalid target proxy address");
@@ -366,7 +379,11 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== BRIDGE FUNCTIONS ====================
-    
+
+    /// @notice Send a message to the Main chain (ETH Sepolia)
+    /// @param _functionName Name of the function to call on destination
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToMainChain(
         string memory _functionName,
         bytes memory _payload,
@@ -383,6 +400,11 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, mainChainEid, _payload);
     }
     
+    /// @notice Send a message to a local chain (determined by dispute/job ID prefix)
+    /// @param _disputeId Dispute or job ID containing the target chain EID as prefix
+    /// @param _functionName Name of the function to call on destination
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToLocalChain(
         string memory _disputeId,
         string memory _functionName,
@@ -403,6 +425,10 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, targetEid, _payload);
     }
 
+    /// @notice Sync user's claimable rewards data to Main chain
+    /// @param user Address of the user
+    /// @param claimableAmount Total claimable amount for the user
+    /// @param _options LayerZero messaging options
     function sendSyncRewardsData(
         address user,
         uint256 claimableAmount,
@@ -425,6 +451,10 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent("syncClaimableRewards", mainChainEid, payload);
     }
 
+    /// @notice Sync user's voting power to Main chain for DAO governance
+    /// @param user Address of the user
+    /// @param totalRewards Total rewards determining voting power
+    /// @param _options LayerZero messaging options
     function sendSyncVotingPower(
         address user,
         uint256 totalRewards,
@@ -449,6 +479,11 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     
     // ==================== QUOTE FUNCTIONS ====================
 
+    /// @notice Get fee quote for syncing voting power to Main chain
+    /// @param user Address of the user
+    /// @param totalRewards Total rewards determining voting power
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteSyncVotingPower(
         address user,
         uint256 totalRewards,
@@ -463,6 +498,11 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
 
+    /// @notice Get fee quote for syncing rewards data to Main chain
+    /// @param user Address of the user
+    /// @param claimableAmount Total claimable amount for the user
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteSyncRewardsData(
         address user,
         uint256 claimableAmount,
@@ -477,6 +517,11 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
 
+    /// @notice Get fee quote for sending a message to a local chain
+    /// @param _disputeId Dispute or job ID containing the target chain EID as prefix
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteLocalChain(
         string memory _disputeId,
         bytes calldata _payload,
@@ -489,6 +534,10 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
 
+    /// @notice Get fee quote for sending a message to Main chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteMainChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -497,6 +546,20 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
         
+    /// @notice Get fee quote for sending messages to three chains
+    /// @param _dstEid1 LayerZero endpoint ID of first destination chain
+    /// @param _dstEid2 LayerZero endpoint ID of second destination chain
+    /// @param _dstEid3 LayerZero endpoint ID of third destination chain
+    /// @param _payload1 ABI-encoded message data for first chain
+    /// @param _payload2 ABI-encoded message data for second chain
+    /// @param _payload3 ABI-encoded message data for third chain
+    /// @param _options1 LayerZero messaging options for first chain
+    /// @param _options2 LayerZero messaging options for second chain
+    /// @param _options3 LayerZero messaging options for third chain
+    /// @return totalFee Combined fee for all messages
+    /// @return fee1 Fee for first chain message
+    /// @return fee2 Fee for second chain message
+    /// @return fee3 Fee for third chain message
     function quoteThreeChains(
         uint32 _dstEid1,
         uint32 _dstEid2,
@@ -520,55 +583,77 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
     
     // ==================== ADMIN FUNCTIONS ====================
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external {
         require(msg.sender == owner() || msg.sender == nativeDAO, "Only owner or DAO");
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
     }
 
+    /// @notice Set the NativeDAO contract address for admin authorization
+    /// @param _nativeDAO Address of the NativeOpenworkDAO contract
     function setNativeDAO(address _nativeDAO) external onlyOwner {
         address oldDAO = nativeDAO;
         nativeDAO = _nativeDAO;
         emit NativeDAOUpdated(oldDAO, _nativeDAO);
     }
 
+    /// @notice Authorize a contract to use this bridge for sending messages
+    /// @param _contract Contract address to authorize
+    /// @param _authorized True to authorize, false to revoke
     function authorizeContract(address _contract, bool _authorized) external onlyOwner {
         authorizedContracts[_contract] = _authorized;
         emit ContractAuthorized(_contract, _authorized);
     }
     
+    /// @notice Set the NativeDAO contract address for message routing
+    /// @param _nativeDao Address of the NativeOpenworkDAO contract
     function setNativeDaoContract(address _nativeDao) external onlyOwner {
         nativeDaoContract = _nativeDao;
         emit ContractAddressSet("nativeDao", _nativeDao);
     }
-    
+
+    /// @notice Set the NativeAthena contract address for dispute routing
+    /// @param _nativeAthena Address of the NativeAthena contract
     function setNativeAthenaContract(address _nativeAthena) external onlyOwner {
         nativeAthenaContract = _nativeAthena;
         emit ContractAddressSet("nativeAthena", _nativeAthena);
     }
     
+    /// @notice Set the NOWJC contract address for job routing
+    /// @param _nativeOpenWorkJob Address of the NativeOpenWorkJobContract
     function setNativeOpenWorkJobContract(address _nativeOpenWorkJob) external onlyOwner {
         nativeOpenWorkJobContract = _nativeOpenWorkJob;
         emit ContractAddressSet("nativeOpenWorkJob", _nativeOpenWorkJob);
     }
-    
+
+    /// @notice Set the DirectContractManager address for direct contract routing
+    /// @param _directContractManager Address of the DirectContractManager contract
     function setDirectContractManager(address _directContractManager) external onlyOwner {
         require(_directContractManager != address(0), "Invalid Direct Contract Manager address");
         directContractManager = _directContractManager;
         emit DirectContractManagerSet(_directContractManager);
     }
     
+    /// @notice Set the ProfileManager contract address for profile routing
+    /// @param _profileManager Address of the ProfileManager contract
     function setProfileManager(address _profileManager) external onlyOwner {
         require(_profileManager != address(0), "Invalid Profile Manager address");
         profileManager = _profileManager;
         emit ContractAddressSet("profileManager", _profileManager);
     }
-    
+
+    /// @notice Update the Main chain endpoint ID
+    /// @param _mainChainEid New LayerZero endpoint ID for Main chain
     function updateMainChainEid(uint32 _mainChainEid) external onlyOwner {
         mainChainEid = _mainChainEid;
         emit ChainEndpointUpdated("main", _mainChainEid);
     }
     
+    /// @notice Withdraw accumulated ETH from the contract
+    /// @dev Used to recover ETH sent for LayerZero fees
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");

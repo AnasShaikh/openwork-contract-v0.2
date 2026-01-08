@@ -25,6 +25,10 @@ interface IUpgradeable {
     function upgradeFromDAO(address newImplementation) external;
 }
 
+/// @title LocalLZOpenworkBridge
+/// @notice LayerZero bridge on Local chains (OP Sepolia) for cross-chain communication
+/// @dev Handles outgoing messages to Native/Main chains and incoming upgrade/dispute messages
+///      Uses LayerZero V2 OApp pattern for omnichain messaging
 contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
 
     // Authorized contracts that can use the bridge
@@ -183,7 +187,11 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== BRIDGE FUNCTIONS ====================
-    
+
+    /// @notice Send a message to the Native chain (Arbitrum)
+    /// @param _functionName Name of the function to call on destination
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
@@ -200,6 +208,10 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, nativeChainEid, _payload);
     }
     
+    /// @notice Send a message to the Main chain (ETH Sepolia)
+    /// @param _functionName Name of the function to call on destination
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToMainChain(
         string memory _functionName,
         bytes memory _payload,
@@ -216,6 +228,12 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, mainChainEid, _payload);
     }
     
+    /// @notice Send messages to both Main and Native chains in a single transaction
+    /// @param _functionName Name of the function to call on destinations
+    /// @param _mainChainPayload ABI-encoded message data for Main chain
+    /// @param _nativePayload ABI-encoded message data for Native chain
+    /// @param _mainChainOptions LayerZero messaging options for Main chain
+    /// @param _nativeOptions LayerZero messaging options for Native chain
     function sendToTwoChains(
         string memory _functionName,
         bytes memory _mainChainPayload,
@@ -252,6 +270,11 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         emit CrossChainMessageSent(_functionName, nativeChainEid, _nativePayload);
     }
     
+    /// @notice Send a message to a specific chain by endpoint ID
+    /// @param _functionName Name of the function to call on destination
+    /// @param _dstEid LayerZero endpoint ID of destination chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
     function sendToSpecificChain(
         string memory _functionName,
         uint32 _dstEid,
@@ -270,7 +293,11 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
     }
     
     // ==================== QUOTE FUNCTIONS ====================
-    
+
+    /// @notice Get fee quote for sending a message to Native chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteNativeChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -279,6 +306,10 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
     
+    /// @notice Get fee quote for sending a message to Main chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteMainChain(
         bytes calldata _payload,
         bytes calldata _options
@@ -287,6 +318,14 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         return msgFee.nativeFee;
     }
     
+    /// @notice Get fee quote for sending messages to both Main and Native chains
+    /// @param _mainChainPayload ABI-encoded message data for Main chain
+    /// @param _nativePayload ABI-encoded message data for Native chain
+    /// @param _mainChainOptions LayerZero messaging options for Main chain
+    /// @param _nativeOptions LayerZero messaging options for Native chain
+    /// @return totalFee Combined fee for both messages
+    /// @return mainChainFee Fee for Main chain message
+    /// @return nativeFee Fee for Native chain message
     function quoteTwoChains(
         bytes calldata _mainChainPayload,
         bytes calldata _nativePayload,
@@ -301,6 +340,11 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         totalFee = mainChainFee + nativeFee;
     }
     
+    /// @notice Get fee quote for sending a message to a specific chain
+    /// @param _dstEid LayerZero endpoint ID of destination chain
+    /// @param _payload ABI-encoded message data
+    /// @param _options LayerZero messaging options
+    /// @return fee Native token fee required
     function quoteSpecificChain(
         uint32 _dstEid,
         bytes calldata _payload,
@@ -312,6 +356,9 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
     
     // ==================== ADMIN MANAGEMENT ====================
 
+    /// @notice Set admin status for an address
+    /// @param _admin Address to modify
+    /// @param _status True to grant admin, false to revoke
     function setAdmin(address _admin, bool _status) external onlyOwner {
         admins[_admin] = _status;
         emit AdminUpdated(_admin, _status);
@@ -319,38 +366,55 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
 
     // ==================== ADMIN FUNCTIONS ====================
 
+    /// @notice Authorize a contract to use this bridge for sending messages
+    /// @param _contract Contract address to authorize
+    /// @param _authorized True to authorize, false to revoke
     function authorizeContract(address _contract, bool _authorized) external {
         require(admins[msg.sender], "Only admin");
         authorizedContracts[_contract] = _authorized;
         emit ContractAuthorized(_contract, _authorized);
     }
 
+    /// @notice Set the LocalAthena contract address for routing dispute messages
+    /// @param _athenaClient Address of the LocalAthena contract
     function setAthenaClientContract(address _athenaClient) external onlyOwner {
         athenaClientContract = _athenaClient;
         emit ContractAddressSet("athenaClient", _athenaClient);
     }
-    
+
+    /// @notice Set the LOWJC contract address for routing messages
+    /// @param _lowjc Address of the LocalOpenWorkJobContract
     function setLowjcContract(address _lowjc) external onlyOwner {
         lowjcContract = _lowjc;
         emit ContractAddressSet("lowjc", _lowjc);
     }
     
+    /// @notice Update the Native chain endpoint ID
+    /// @param _nativeChainEid New LayerZero endpoint ID for Native chain
     function updateNativeChainEid(uint32 _nativeChainEid) external onlyOwner {
         nativeChainEid = _nativeChainEid;
         emit ChainEndpointUpdated("native", _nativeChainEid);
     }
-    
+
+    /// @notice Update the Main chain endpoint ID
+    /// @param _mainChainEid New LayerZero endpoint ID for Main chain
     function updateMainChainEid(uint32 _mainChainEid) external onlyOwner {
         mainChainEid = _mainChainEid;
         emit ChainEndpointUpdated("main", _mainChainEid);
     }
-    
+
+    /// @notice Update this local chain's endpoint ID
+    /// @param _thisLocalChainEid New LayerZero endpoint ID for this chain
     function updateThisLocalChainEid(uint32 _thisLocalChainEid) external onlyOwner {
         uint32 oldEid = thisLocalChainEid;
         thisLocalChainEid = _thisLocalChainEid;
         emit ThisLocalChainEidUpdated(oldEid, _thisLocalChainEid);
     }
     
+    /// @notice Update all chain endpoint IDs in a single transaction
+    /// @param _nativeChainEid New LayerZero endpoint ID for Native chain
+    /// @param _mainChainEid New LayerZero endpoint ID for Main chain
+    /// @param _thisLocalChainEid New LayerZero endpoint ID for this chain
     function updateChainEndpoints(uint32 _nativeChainEid, uint32 _mainChainEid, uint32 _thisLocalChainEid) external onlyOwner {
         nativeChainEid = _nativeChainEid;
         mainChainEid = _mainChainEid;
@@ -359,7 +423,9 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
         emit ChainEndpointUpdated("main", _mainChainEid);
         emit ThisLocalChainEidUpdated(thisLocalChainEid, _thisLocalChainEid);
     }
-    
+
+    /// @notice Withdraw accumulated ETH from the contract
+    /// @dev Used to recover ETH sent for LayerZero fees
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No balance to withdraw");
