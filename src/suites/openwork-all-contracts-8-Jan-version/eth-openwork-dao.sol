@@ -16,7 +16,7 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-interface IMainBridge {
+interface IETHLZOpenworkBridge {
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
@@ -50,7 +50,7 @@ contract ETHOpenworkDAO is
     UUPSUpgradeable
 {
     IERC20 public openworkToken;
-    IMainBridge public bridge;
+    IETHLZOpenworkBridge public bridge;
     uint256 public constant MIN_STAKE = 100 * 10**18;
     uint32 public chainId;
     
@@ -122,7 +122,7 @@ contract ETHOpenworkDAO is
         
         openworkToken = IERC20(_openworkToken);
         chainId = _chainId;
-        bridge = IMainBridge(_bridge);
+        bridge = IETHLZOpenworkBridge(_bridge);
 
         // Initialize governance parameters
         proposalThresholdAmount = 100 * 10**18;
@@ -147,7 +147,7 @@ contract ETHOpenworkDAO is
     
     function setBridge(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Invalid bridge address");
-        bridge = IMainBridge(_bridge);
+        bridge = IETHLZOpenworkBridge(_bridge);
         emit BridgeUpdated(_bridge);
     }
     

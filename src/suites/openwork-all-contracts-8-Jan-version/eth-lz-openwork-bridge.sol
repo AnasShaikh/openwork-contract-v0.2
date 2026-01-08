@@ -7,11 +7,11 @@ import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IRewardsContract {
+interface IETHRewardsContract {
     function handleSyncClaimableRewards(address user, uint256 claimableAmount, uint32 sourceChain) external;
 }
 
-interface IMainDAO {
+interface IETHOpenworkDAO {
     function handleSyncVotingPower(address user, uint256 totalRewards, uint32 sourceChain) external;
 }
 
@@ -130,13 +130,13 @@ function sendUpgradeCommand(
         else if (keccak256(bytes(functionName)) == keccak256(bytes("syncClaimableRewards"))) {
         require(rewardsContract != address(0), "Rewards contract not set");
         (, address user, uint256 claimableAmount) = abi.decode(_message, (string, address, uint256));
-        IRewardsContract(rewardsContract).handleSyncClaimableRewards(user, claimableAmount, _origin.srcEid);
+        IETHRewardsContract(rewardsContract).handleSyncClaimableRewards(user, claimableAmount, _origin.srcEid);
         }
 
         else if (keccak256(bytes(functionName)) == keccak256(bytes("syncVotingPower"))) {
         require(mainDaoContract != address(0), "Main DAO contract not set");
         (, address user, uint256 totalRewards) = abi.decode(_message, (string, address, uint256));
-        IMainDAO(mainDaoContract).handleSyncVotingPower(user, totalRewards, _origin.srcEid);
+        IETHOpenworkDAO(mainDaoContract).handleSyncVotingPower(user, totalRewards, _origin.srcEid);
         }
             
         emit CrossChainMessageReceived(functionName, _origin.srcEid, _message);

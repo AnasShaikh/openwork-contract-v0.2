@@ -7,7 +7,7 @@ import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-interface INativeDAO {
+interface INativeOpenworkDAO {
     function updateStakeData(
         address staker,
         uint256 amount,
@@ -234,7 +234,7 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
         else if (keccak256(bytes(functionName)) == keccak256(bytes("updateStakeData"))) {
             require(nativeDaoContract != address(0), "Native DAO contract not set");
             (, address staker, uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive) = abi.decode(_message, (string, address, uint256, uint256, uint256, bool));
-            INativeDAO(nativeDaoContract).updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
+            INativeOpenworkDAO(nativeDaoContract).updateStakeData(staker, amount, unlockTime, durationMinutes, isActive);
         }
 
         // ==================== NATIVE ATHENA MESSAGES ====================
@@ -354,7 +354,7 @@ contract NativeLZOpenworkBridge is OAppSender, OAppReceiver {
             INativeAthena(nativeAthenaContract).upgradeFromDAO(newImplementation);
         } else if (targetProxy == nativeDaoContract) {
             require(nativeDaoContract != address(0), "Native DAO contract not set");
-            INativeDAO(nativeDaoContract).upgradeFromDAO(newImplementation);
+            INativeOpenworkDAO(nativeDaoContract).upgradeFromDAO(newImplementation);
         } else if (targetProxy == nativeOpenWorkJobContract) {
             require(nativeOpenWorkJobContract != address(0), "Native OpenWork Job contract not set");
             INativeOpenWorkJobContract(nativeOpenWorkJobContract).upgradeFromDAO(newImplementation);

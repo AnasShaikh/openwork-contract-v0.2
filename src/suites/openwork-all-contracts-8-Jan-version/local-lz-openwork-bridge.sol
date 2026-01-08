@@ -7,7 +7,7 @@ import { OAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/OAppCore.sol";
 import { Origin } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IAthenaClient {
+interface ILocalAthena {
     function handleFinalizeDisputeWithVotes(
         string memory disputeId, 
         bool winningSide, 
@@ -176,7 +176,7 @@ contract LocalLZOpenworkBridge is OAppSender, OAppReceiver {
          uint256[] memory votingPowers, bool[] memory voteDirections) =
             abi.decode(_message, (string, string, bool, uint256, uint256, address[], address[], uint256[], bool[]));
         
-        IAthenaClient(athenaClientContract).handleFinalizeDisputeWithVotes(
+        ILocalAthena(athenaClientContract).handleFinalizeDisputeWithVotes(
             disputeId, winningSide, votesFor, votesAgainst,
             voters, claimAddresses, votingPowers, voteDirections
         );

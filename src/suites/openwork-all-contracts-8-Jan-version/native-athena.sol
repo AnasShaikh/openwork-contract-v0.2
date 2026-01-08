@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // Interface to get staker info from Native DAO
-interface INativeDAO {
+interface INativeOpenworkDAO {
     function getStakerInfo(address staker) external view returns (uint256 amount, uint256 unlockTime, uint256 durationMinutes, bool isActive);
 }
 
@@ -528,7 +528,7 @@ contract NativeAthena is
     function canVote(address account) public view returns (bool) {
         // First check if user has sufficient active stake
         if (daoContract != address(0)) {
-            (uint256 stakeAmount, , , bool isActive) = INativeDAO(daoContract).getStakerInfo(account);
+            (uint256 stakeAmount, , , bool isActive) = INativeOpenworkDAO(daoContract).getStakerInfo(account);
             if (isActive && stakeAmount >= minStakeRequired) {
                 return true;
             }
@@ -548,7 +548,7 @@ contract NativeAthena is
         
         // Get stake-based voting power
         if (daoContract != address(0)) {
-            (uint256 stakeAmount, , uint256 durationMinutes, bool isActive) = INativeDAO(daoContract).getStakerInfo(account);
+            (uint256 stakeAmount, , uint256 durationMinutes, bool isActive) = INativeOpenworkDAO(daoContract).getStakerInfo(account);
             if (isActive && stakeAmount > 0) {
                 totalVotingPower += stakeAmount * durationMinutes;
             }

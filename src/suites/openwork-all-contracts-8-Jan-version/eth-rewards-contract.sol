@@ -10,7 +10,7 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-interface IMainDAO {
+interface IETHOpenworkDAO {
     function handleUpdateStakeDataFromRewards(
         address staker,
         uint256 amount,
@@ -20,7 +20,7 @@ interface IMainDAO {
     ) external;
 }
 
-interface IMainBridge {
+interface IETHLZOpenworkBridge {
     function sendToNativeChain(
         string memory _functionName,
         bytes memory _payload,
@@ -49,8 +49,8 @@ contract ETHRewardsContract is
     ReentrancyGuardUpgradeable
 {
     IERC20 public openworkToken;
-    IMainDAO public mainDAO;
-    IMainBridge public bridge;
+    IETHOpenworkDAO public mainDAO;
+    IETHLZOpenworkBridge public bridge;
 
     // User referrer mapping
     mapping(address => address) public userReferrers;
@@ -88,7 +88,7 @@ contract ETHRewardsContract is
         __ReentrancyGuard_init();
 
         openworkToken = IERC20(_openworkToken);
-        bridge = IMainBridge(_bridge);
+        bridge = IETHLZOpenworkBridge(_bridge);
         admins[_owner] = true;
         _initializeAuthorizedChains();
     }
@@ -142,7 +142,7 @@ contract ETHRewardsContract is
 
     function setBridge(address _bridge) external onlyOwner {
         address oldBridge = address(bridge);
-        bridge = IMainBridge(_bridge);
+        bridge = IETHLZOpenworkBridge(_bridge);
         emit BridgeUpdated(oldBridge, _bridge);
     }
 
@@ -152,7 +152,7 @@ contract ETHRewardsContract is
     }
 
     function setMainDAO(address _mainDAO) external onlyOwner {
-        mainDAO = IMainDAO(_mainDAO);
+        mainDAO = IETHOpenworkDAO(_mainDAO);
         emit ContractUpdated("MainDAO", _mainDAO);
     }
 

@@ -115,7 +115,7 @@ interface IOpenWorkRewards {
     function teamTokensAllocated(address user) external view returns (uint256);
 }
 
-interface INativeBridge {
+interface INativeLZOpenworkBridge {
     function sendSyncRewardsData(
         address user,
         uint256 claimableAmount,
@@ -533,7 +533,7 @@ contract NativeOpenWorkJobContract is
         require(totalEarnedTokens > 0, "No tokens");
         
         // Send to bridge
-        INativeBridge(bridge).sendSyncVotingPower{value: msg.value}(
+        INativeLZOpenworkBridge(bridge).sendSyncVotingPower{value: msg.value}(
             msg.sender,
             totalEarnedTokens,
             _options
@@ -1015,7 +1015,7 @@ contract NativeOpenWorkJobContract is
     require(totalUnlocked > 0, "No tokens");
 
     // Send simple data to bridge
-    INativeBridge(bridge).sendSyncRewardsData{value: msg.value}(
+    INativeLZOpenworkBridge(bridge).sendSyncRewardsData{value: msg.value}(
         msg.sender,
         totalUnlocked,
         _options
